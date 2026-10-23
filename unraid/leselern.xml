@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>leselern</Name>
+  <Repository>ghcr.io/itguru279/leselernprojekt:latest</Repository>
+  <Registry>https://github.com/Itguru279/LeselernProjekt/pkgs/container/leselernprojekt</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Itguru279/LeselernProjekt</Support>
+  <Project>https://github.com/Itguru279/LeselernProjekt</Project>
+  <Overview>Lese-App für Leseanfänger: täglich kleine Aufgaben und Geschichten, die nur Buchstaben enthalten, die das Kind schon kennt. Läuft komplett lokal, ohne Cloud und ohne KI-Dienst.</Overview>
+  <Category>Productivity: Other:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/Itguru279/LeselernProjekt/main/public/icon.svg</Icon>
+  <Config Name="Web-Port" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/leselern" Mode="rw" Description="Datenbank (Fortschritt, Archiv). Wird vom Appdata-Backup mitgesichert." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/leselern</Config>
+  <Config Name="Admin-Passwort" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Passwort für den Admin, nur beim ersten Start benutzt. Leer lassen = zufälliges Passwort im Log." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Name des Kindes" Target="CHILD_NAME" Default="Ben" Mode="" Description="Nur beim ersten Start" Type="Variable" Display="always" Required="false" Mask="false">Ben</Config>
+  <Config Name="Bilder-Code des Kindes" Target="CHILD_CODE" Default="hund,katze,frosch" Mode="" Description="Drei Tiere in Reihenfolge. Möglich: hund, katze, maus, frosch, fuchs, baer, hase, loewe, pinguin. Nur beim ersten Start, danach in den Einstellungen änderbar." Type="Variable" Display="always" Required="false" Mask="false">hund,katze,frosch</Config>
+  <Config Name="Startbuchstaben" Target="START_LETTERS" Default="a,m,l,o,i,e" Mode="" Description="Nur beim ersten Start, danach im Menü Buchstaben änderbar" Type="Variable" Display="always" Required="false" Mask="false">a,m,l,o,i,e</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Bestimmt, wann ein neuer Lesetag beginnt" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Benutzer für die Dateien (Unraid: 99)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppe für die Dateien (Unraid: 100)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>

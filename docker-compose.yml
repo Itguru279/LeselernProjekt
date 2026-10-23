@@ -1,0 +1,21 @@
+# Start mit: docker compose up -d
+# Danach erreichbar unter http://SERVER-IP:8080 (HTTPS kommt über Cloudflare).
+services:
+  leselern:
+    image: ghcr.io/itguru279/leselernprojekt:latest
+    # Alternativ direkt aus dem Quellcode bauen (statt image):
+    # build: https://github.com/Itguru279/LeselernProjekt.git#main
+    container_name: leselern
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /mnt/user/appdata/leselern:/data
+    environment:
+      TZ: Europe/Berlin
+      ADMIN_PASSWORD: "bitte-aendern"   # nur beim allerersten Start benutzt
+      CHILD_NAME: Ben
+      CHILD_CODE: hund,katze,frosch     # Bilder-Code für Ben (beim ersten Start)
+      START_LETTERS: a,m,l,o,i,e
+      PUID: "99"
+      PGID: "100"

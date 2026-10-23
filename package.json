@@ -1,0 +1,16 @@
+{
+  "name": "leselern",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lese-App für Leseanfänger: tägliche Mini-Geschichten nur mit bekannten Buchstaben",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "DATA_DIR=./data ADMIN_PASSWORD=admin123 node --watch src/server.ts",
+    "test": "node --no-warnings --test test/*.test.ts",
+    "vorschau": "node scripts/vorschau.ts"
+  }
+}
