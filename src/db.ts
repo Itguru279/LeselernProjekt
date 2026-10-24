@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { log } from './log.ts';
 
 export type Db = DatabaseSync;
 
@@ -60,6 +61,11 @@ CREATE TABLE IF NOT EXISTS story_progress (
   PRIMARY KEY (user_id, series)
 );
 
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS stickers (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -90,6 +96,16 @@ function migrate(db: Db): void {
     const cols = db.prepare(`PRAGMA table_info(${c.table})`).all() as { name: string }[];
     if (!cols.some((x) => x.name === c.column)) {
       db.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.definition}`);
+      log.info('db', 'Datenbank ergänzt', { spalte: `${c.table}.${c.column}` });
     }
   }
+}
+
+export function getMeta(db: Db, key: string): string | null {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setMeta(db: Db, key: string, value: string): void {
+  db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value);
 }

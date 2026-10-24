@@ -13,7 +13,7 @@ Die App läuft komplett auf dem eigenen Server (zum Beispiel Unraid), ohne Cloud
 | **Lernen** | Lernrunde zu einem einzelnen freigeschalteten Buchstaben: Laut hören, Anlaut finden, Buchstaben finden, Silben, Wörter und Sätze mit genau diesem Buchstaben. Noch nicht freigeschaltete Buchstaben sind verschlossen. |
 | **Üben** | Die heutigen Übungen einzeln oder alle nacheinander (ohne Geschichte). Zählt für den Sticker mit. |
 | **Geschichte** | Nur die heutige Geschichte (Wahl zwischen zwei Folgen). |
-| **Buchstaben** | Ben sieht seine Buchstaben und kann Silben und Wörter dazu anhören. Der Admin wählt hier aus, welche Buchstaben bekannt sind (Start: A M L O I E). |
+| **Buchstaben** | Ben sieht seine Buchstaben und kann Silben und Wörter dazu anhören. Neue Buchstaben kann Ben selbst freischalten (Schloss antippen → „freischalten“); entfernen kann nur der Admin. Der Admin wählt hier alle bekannten Buchstaben aus (Start: A M L O I E). |
 | **Alle Geschichten** | Bücherregal (gelesene Folgen noch einmal lesen; der Admin sieht alle) und Archiv aller bisher erzeugten Tage mit Buchstaben-Filter. |
 | **Einstellungen** (nur Admin) | Aufgaben pro Tag, Silbenbögen an/aus, Vorlesen beim Antippen (sofort / erst nach 15 Sekunden / aus), heutige Aufgaben neu erzeugen, Bilder-Code von Ben, Admin-Passwort. |
 
@@ -40,8 +40,9 @@ Die Schritt-für-Schritt-Anleitung steht in **[docs/UNRAID.md](docs/UNRAID.md)**
 
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | (zufällig, im Log) | Admin-Passwort beim **ersten** Start |
-| `RESET_ADMIN_PASSWORD` | – | `true` setzt das Passwort beim Start auf `ADMIN_PASSWORD` zurück (danach wieder entfernen) |
+| `ADMIN_PASSWORD` | (zufällig, im Log) | Admin-Passwort. Beim ersten Start gesetzt; wird der Wert später **geändert**, gilt nach dem Neustart das neue Passwort. Ein in den Einstellungen geändertes Passwort bleibt, solange `ADMIN_PASSWORD` gleich bleibt. |
+| `RESET_ADMIN_PASSWORD` | – | `true` setzt das Passwort beim Start immer auf `ADMIN_PASSWORD` zurück (danach wieder entfernen) |
+| `LOG_LEVEL` | `info` | `info`: Start-Übersicht, jeder Seitenaufruf, Anmeldungen (auch fehlgeschlagene, mit Grund), Änderungen. `debug`: zusätzlich Dateien, Health-Checks, jedes Aufgaben-Ergebnis. `warn`: nur Probleme. |
 | `CHILD_NAME` | `Ben` | Name des Kindes (erster Start) |
 | `CHILD_CODE` | `hund,katze,frosch` | Bilder-Code (erster Start). Tiere: hund, katze, maus, frosch, fuchs, baer, hase, loewe, pinguin |
 | `START_LETTERS` | `a,m,l,o,i,e` | Bekannte Buchstaben beim ersten Start |

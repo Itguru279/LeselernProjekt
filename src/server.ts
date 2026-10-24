@@ -2,6 +2,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, normalize, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.ts';
@@ -31,6 +32,7 @@ import {
   regenerateToday,
   setGraphemes,
   setReadAloud,
+  unlockLetter,
   setSyllableArcs,
   storyProgress,
   setTasksPerDay,
@@ -39,6 +41,7 @@ import {
 } from './app.ts';
 import * as V from './views.ts';
 import { dropPrivileges } from './privileges.ts';
+import { log, enabled } from './log.ts';
 import { generateLesson, eligibleSeries } from './generator/daily.ts';
 import { labelOf } from './generator/graphemes.ts';
 import { renderEpisode } from './generator/story.ts';
@@ -124,6 +127,11 @@ export function createApp(db: Db, config = loadConfig()) {
     return `${who}|${ip}`;
   }
 
+  const ipOf = (req: IncomingMessage) => (req.headers['cf-connecting-ip'] as string) ?? req.socket.remoteAddress ?? '?';
+  /** Wie das Login-Cookie gesetzt wird (hilft bei Problemen hinter Cloudflare). */
+  const cookieInfo = (req: IncomingMessage) =>
+    secureCookie(req) ? `secure (proto=${req.headers['x-forwarded-proto'] ?? '?'})` : `http (proto=${req.headers['x-forwarded-proto'] ?? 'keins'})`;
+
   /** Das Kind, um das es geht: für Kinder sie selbst, für den Admin das erste Kind. */
   function childFor(user: SessionUser): { id: number; name: string; avatar: string } {
     if (user.role === 'child') return { id: user.id, name: user.name, avatar: user.avatar };
@@ -178,15 +186,20 @@ export function createApp(db: Db, config = loadConfig()) {
       if (method === 'GET') return send(res, 200, V.childCodePage(kid, null, isLocked(key)));
       if (method === 'POST') {
         const locked = isLocked(key);
-        if (locked) return send(res, 429, V.childCodePage(kid, null, locked));
+        if (locked) {
+          log.warn('login', 'Kind-Anmeldung gesperrt (zu viele Fehlversuche)', { kind: kid.name, ip: ipOf(req), sekunden: locked });
+          return send(res, 429, V.childCodePage(kid, null, locked));
+        }
         const code = normalizeCode((await form(req)).get('code') ?? '');
         const row = db.prepare('SELECT picture_code_hash FROM users WHERE id = ?').get(kid.id) as { picture_code_hash: string };
         if (code && verifySecret(code, row.picture_code_hash)) {
           registerSuccess(key);
+          log.info('login', 'Kind angemeldet', { kind: kid.name, ip: ipOf(req), cookie: cookieInfo(req) });
           const s = createSession(db, kid.id, 'child');
           return redirect(res, '/menu', { 'Set-Cookie': sessionCookie(req, s.token, s.maxAgeSeconds) });
         }
         registerFailure(key);
+        log.warn('login', 'Kind-Anmeldung: falsche Tiere', { kind: kid.name, ip: ipOf(req), sperre: isLocked(key) || undefined });
         return send(res, 401, V.childCodePage(kid, 'Das waren nicht die richtigen Tiere. Probier es noch einmal!', isLocked(key)));
       }
     }
@@ -196,23 +209,36 @@ export function createApp(db: Db, config = loadConfig()) {
       if (method === 'GET') return send(res, 200, V.adminLoginPage(null, isLocked(key)));
       if (method === 'POST') {
         const locked = isLocked(key);
-        if (locked) return send(res, 429, V.adminLoginPage(null, locked));
-        const password = (await form(req)).get('password') ?? '';
-        const admin = db.prepare("SELECT id, password_hash FROM users WHERE role = 'admin' LIMIT 1").get() as {
-          id: number;
-          password_hash: string;
-        };
-        if (admin && verifySecret(password, admin.password_hash)) {
+        if (locked) {
+          log.warn('login', 'Admin-Anmeldung gesperrt (zu viele Fehlversuche, kurz warten)', { ip: ipOf(req), sekunden: locked });
+          return send(res, 429, V.adminLoginPage(null, locked));
+        }
+        const raw = (await form(req)).get('password') ?? '';
+        const admin = db.prepare("SELECT id, password_hash FROM users WHERE role = 'admin' LIMIT 1").get() as
+          | { id: number; password_hash: string | null }
+          | undefined;
+        // Leerzeichen am Rand (Autokorrektur auf Tablets) nicht mitzählen
+        const ok = !!admin && (verifySecret(raw, admin.password_hash) || (raw.trim() !== raw && verifySecret(raw.trim(), admin.password_hash)));
+        if (admin && ok) {
           registerSuccess(key);
+          log.info('login', 'Admin angemeldet', { ip: ipOf(req), cookie: cookieInfo(req) });
           const s = createSession(db, admin.id, 'admin');
           return redirect(res, '/menu', { 'Set-Cookie': sessionCookie(req, s.token, s.maxAgeSeconds) });
         }
         registerFailure(key);
+        log.warn('login', 'Admin-Anmeldung: Passwort falsch', {
+          ip: ipOf(req),
+          eingegeben: `${raw.length} Zeichen`,
+          grund: !admin ? 'kein Admin in der Datenbank' : !raw ? 'leeres Passwort' : undefined,
+          sperre: isLocked(key) ? `${isLocked(key)} s` : undefined,
+          tipp: 'ADMIN_PASSWORD ändern und Container neu starten setzt das Passwort neu',
+        });
         return send(res, 401, V.adminLoginPage('Das Passwort stimmt nicht.', isLocked(key)));
       }
     }
 
     if (path === '/logout' && method === 'POST') {
+      log.info('login', 'Abgemeldet', { wer: ctx.user?.name, ip: ipOf(req) });
       deleteSession(db, ctx.token);
       return redirect(res, '/login', { 'Set-Cookie': 'sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' });
     }
@@ -352,10 +378,24 @@ export function createApp(db: Db, config = loadConfig()) {
         const next = [...before.filter((g) => chosen.includes(g)), ...chosen.filter((g) => !before.includes(g))];
         setGraphemes(db, child.id, next);
         regenerateToday(db, child.id, today);
+        log.info('buchstaben', 'Buchstaben vom Admin gespeichert', { buchstaben: next.join(',') });
         return redirect(res, '/buchstaben?ok=buchstaben');
       }
       const flash = FLASH[url.searchParams.get('ok') ?? ''] ?? null;
       return send(res, 200, V.lettersPage(user, getSettings(db, child.id), flash));
+    }
+
+    // Buchstaben freischalten: dürfen Kind und Admin (entfernen nur der Admin)
+    const unlockMatch = path.match(/^\/buchstaben\/([^/]+)\/freischalten$/);
+    if (unlockMatch && method === 'POST') {
+      const id = decodeURIComponent(unlockMatch[1]);
+      const r = unlockLetter(db, child.id, id, today);
+      log.info('buchstaben', r.added ? 'Buchstabe freigeschaltet' : 'Buchstabe war schon frei', {
+        buchstabe: id,
+        von: user.name,
+        heuteNeu: r.regenerated ? 'ja' : 'nein (heute schon geübt, neue Aufgaben ab morgen)',
+      });
+      return redirect(res, r.added ? `/lernen/${encodeURIComponent(id)}` : '/buchstaben');
     }
 
     const letterMatch = path.match(/^\/buchstaben\/([^/]+)$/);
@@ -397,8 +437,11 @@ export function createApp(db: Db, config = loadConfig()) {
           helpCount: Number(body.helpCount ?? 0),
           detail: body.detail && typeof body.detail === 'object' ? { series: String(body.detail.series ?? ''), number: Number(body.detail.number ?? 0) } : undefined,
         });
+        log.debug('lesen', 'Ergebnis gespeichert', { aufgabe: body.taskIndex, richtig: Boolean(body.ok), hilfe: body.helpCount });
+        if (out.sticker) log.info('lesen', 'Tag geschafft, Sticker vergeben', { kind: child.name, sticker: out.sticker });
         return json(res, 200, out);
       } catch (e) {
+        log.warn('lesen', 'Ergebnis nicht gespeichert', { fehler: (e as Error).message });
         return json(res, 400, { error: (e as Error).message });
       }
     }
@@ -425,29 +468,35 @@ export function createApp(db: Db, config = loadConfig()) {
         if (path === '/admin/einstellungen') {
           setTasksPerDay(db, child.id, Number(f.get('tasks')));
           setSyllableArcs(db, child.id, f.get('arcs') === 'on');
+          log.info('admin', 'Einstellungen gespeichert', { aufgaben: f.get('tasks'), silbenboegen: f.get('arcs') === 'on' });
           return redirect(res, '/admin?ok=gespeichert');
         }
         if (path === '/admin/vorlesen') {
           setReadAloud(db, child.id, f.get('mode') ?? 'an', f.get('adult') === 'on');
+          log.info('admin', 'Vorlesen gespeichert', { modus: f.get('mode'), grauerText: f.get('adult') === 'on' });
           return redirect(res, '/admin?ok=vorlesen');
         }
         if (path === '/admin/neu') {
           regenerateToday(db, child.id, today);
+          log.info('admin', 'Heutige Aufgaben neu erzeugt');
           return redirect(res, '/admin?ok=neu');
         }
         if (path === '/admin/code') {
           const code = normalizeCode([f.get('p1'), f.get('p2'), f.get('p3')].join(','));
           if (!code) return redirect(res, '/admin?fehler=code');
           db.prepare('UPDATE users SET picture_code_hash = ? WHERE id = ?').run(hashSecret(code), child.id);
+          log.info('admin', 'Bilder-Code geändert', { kind: child.name });
           return redirect(res, '/admin?ok=code');
         }
         if (path === '/admin/passwort') {
           const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as { password_hash: string };
           const next = f.get('next') ?? '';
           if (!verifySecret(f.get('current') ?? '', row.password_hash) || next.length < 8) {
+            log.warn('admin', 'Passwort nicht geändert (aktuelles falsch oder neues zu kurz)');
             return redirect(res, '/admin?fehler=passwort');
           }
           db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashSecret(next), user.id);
+          log.info('admin', 'Admin-Passwort in den Einstellungen geändert');
           return redirect(res, '/admin?ok=passwort');
         }
       }
@@ -473,11 +522,27 @@ export function createApp(db: Db, config = loadConfig()) {
   }
 
   return createServer(async (req, res) => {
+    const started = Date.now();
     const url = new URL(req.url ?? '/', 'http://localhost');
     const token = cookies(req).sid;
+    let user: SessionUser | null = null;
+    // Jede Anfrage ins Log (Dateien und Health-Check nur bei LOG_LEVEL=debug)
+    res.on('finish', () => {
+      const quietPath = url.pathname.startsWith('/static/') || url.pathname === '/health' || url.pathname.startsWith('/favicon');
+      const level = res.statusCode >= 500 ? 'error' : quietPath ? 'debug' : 'info';
+      if (!enabled(level)) return;
+      log[level]('http', `${req.method} ${url.pathname}${url.search} -> ${res.statusCode}`, {
+        ms: Date.now() - started,
+        wer: user ? `${user.name} (${user.role === 'admin' ? 'Admin' : 'Kind'})` : token ? 'abgelaufene Sitzung' : 'nicht angemeldet',
+        ip: ipOf(req),
+        ziel: res.statusCode === 303 ? (res.getHeader('location') as string) : undefined,
+      });
+    });
     try {
-      await handle({ req, res, url, token, user: userForToken(db, token) });
+      user = userForToken(db, token);
+      await handle({ req, res, url, token, user });
     } catch (e) {
+      log.error('http', `Fehler bei ${req.method} ${url.pathname}`, { fehler: (e as Error).message });
       console.error(e);
       if (!res.headersSent) send(res, 500, 'Da ist etwas schiefgegangen.', 'text/plain; charset=utf-8');
       else res.end();
@@ -488,14 +553,38 @@ export function createApp(db: Db, config = loadConfig()) {
 // Direkt gestartet (nicht in Tests importiert)
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const config = loadConfig();
+  process.on('uncaughtException', (e) => {
+    log.error('app', 'Unerwarteter Fehler', { fehler: e.message });
+    console.error(e);
+  });
+  process.on('unhandledRejection', (e) => log.error('app', 'Unerwarteter Fehler (Promise)', { fehler: String(e) }));
+  log.info('start', 'Leselern-App startet', {
+    version: process.env.APP_VERSION ?? 'dev',
+    node: process.version,
+    port: config.port,
+    daten: config.dataDir,
+    zeitzone: config.timeZone,
+    logLevel: process.env.LOG_LEVEL ?? 'info',
+    adminPasswortGesetzt: config.adminPassword ? 'ja' : 'nein',
+    cookieSecure: process.env.COOKIE_SECURE === 'true' ? 'immer' : 'automatisch (bei HTTPS über Cloudflare)',
+  });
   dropPrivileges(config.dataDir);
-  const db = openDb(join(config.dataDir, 'leselern.db'));
+  log.info('start', 'Rechte', { uid: process.getuid?.(), gid: process.getgid?.() });
+  const dbFile = join(config.dataDir, 'leselern.db');
+  const existed = existsSync(dbFile);
+  const db = openDb(dbFile);
+  log.info('start', existed ? 'Datenbank gefunden' : 'Neue Datenbank angelegt (erster Start oder /data ist nicht dauerhaft eingebunden!)', { datei: dbFile });
   bootstrap(db, config);
+  for (const kid of children(db)) {
+    const st = getSettings(db, kid.id);
+    log.info('start', 'Kind', { name: kid.name, buchstaben: st.graphemes.join(','), aufgabenProTag: st.tasksPerDay, vorlesen: st.readAloud });
+  }
   const server = createApp(db, config);
   server.listen(config.port, () => {
-    console.log(`Leselern-App läuft auf Port ${config.port} (Daten: ${config.dataDir}, Zeitzone: ${config.timeZone})`);
+    log.info('start', `Leselern-App läuft auf Port ${config.port}`, { heute: todayIn(config.timeZone) });
   });
   const stop = () => {
+    log.info('start', 'Container wird beendet');
     server.close();
     db.close();
     process.exit(0);

@@ -127,10 +127,11 @@ export function adminLoginPage(error: string | null, lockedSeconds: number): str
     'Anmelden',
     `<div class="card narrow">
       <h1>Anmelden für Erwachsene</h1>
+      <p class="hint">Passwort vergessen? In Unraid beim Container die Variable ADMIN_PASSWORD auf ein neues Passwort setzen und den Container neu starten. Das Log zeigt, was passiert ist.</p>
       ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
       ${lockedSeconds ? `<p class="error" role="alert">Zu viele Versuche. Bitte ${lockedSeconds} Sekunden warten.</p>` : ''}
       <form method="post" action="/login/admin" class="form">
-        <label>Passwort <input type="password" name="password" autocomplete="current-password" required autofocus></label>
+        <label>Passwort <input type="password" name="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required autofocus></label>
         <button class="btn primary">Anmelden</button>
       </form>
       <p>${backButton('/login')}</p>
@@ -165,7 +166,8 @@ export function menuPage(
     user.role === 'admin'
       ? `<a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Buchstaben wählen</span></a>
          <a class="tile" href="/admin"><span class="tile-emoji">⚙️</span><span class="tile-label">Einstellungen</span></a>`
-      : `<a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Meine Buchstaben</span></a>`;
+      : `<a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Meine Buchstaben</span></a>
+         <a class="tile adult-entry" href="/login/admin"><span class="tile-emoji">🔑</span><span class="tile-label">Erwachsene</span><span class="tile-sub">Einstellungen</span></a>`;
   const practiceAllDone = today.practiceTotal > 0 && today.practiceDone >= today.practiceTotal;
   return layout(
     'Menü',
@@ -247,14 +249,14 @@ export function learnPage(user: SessionUser, settings: ChildSettings): string {
   // Die nächsten Buchstaben der Fibel: noch verschlossen
   const upcoming = LETTER_ORDER.filter((id) => !known.includes(id))
     .slice(0, 4)
-    .map((id) => `<span class="letter off" aria-label="${esc(labelOf(id))} kommt noch"><span class="letter-big">${esc(labelOf(id))}</span><span class="lock">🔒</span></span>`)
+    .map((id) => `<a class="letter off" href="/buchstaben/${encodeURIComponent(id)}" aria-label="${esc(labelOf(id))} freischalten"><span class="letter-big">${esc(labelOf(id))}</span><span class="lock">🔒</span></a>`)
     .join('');
   return layout(
     'Lernen',
     `<h1 class="center">Lernen</h1>
      <p class="hint center">Tippe auf einen Buchstaben. Dann lernst und übst du genau diesen Buchstaben.</p>
      <div class="letters">${knownTiles}${upcoming}</div>
-     ${upcoming ? '<p class="hint center">🔒 Diese Buchstaben kommen bald dazu.</p>' : ''}`,
+     ${upcoming ? '<p class="hint center">🔒 Neuen Buchstaben gelernt? Tippe auf das Schloss, dann kannst du ihn freischalten.</p>' : ''}`,
     { user, back: '/menu' },
   );
 }
@@ -316,13 +318,13 @@ export function lettersPage(user: SessionUser, settings: ChildSettings, flash: s
     }
     return on
       ? `<a class="letter on" href="/buchstaben/${encodeURIComponent(g.id)}">${inner}</a>`
-      : `<span class="letter off" aria-label="${esc(g.label)} noch nicht gelernt">${inner}<span class="lock">🔒</span></span>`;
+      : `<a class="letter off" href="/buchstaben/${encodeURIComponent(g.id)}" aria-label="${esc(g.label)} noch nicht gelernt, antippen zum Freischalten">${inner}<span class="lock">🔒</span></a>`;
   }).join('');
 
   const adminHelp = isAdmin
     ? `<p class="hint">Haken setzen = Buchstabe ist bekannt. Die Zahl zeigt die Reihenfolge, in der die Buchstaben dazukamen;
        der zuletzt hinzugefügte wird in den Aufgaben am häufigsten geübt. Nach dem Speichern werden die heutigen Aufgaben neu erzeugt.</p>`
-    : `<p class="hint center">Tippe auf einen Buchstaben, den du schon kannst.</p>`;
+    : `<p class="hint center">Tippe auf einen Buchstaben. Neuen Buchstaben in der Schule gelernt? Tippe auf das Schloss 🔒 und schalte ihn frei.</p>`;
 
   const grid = isAdmin
     ? `<form method="post" action="/buchstaben" class="letters-form">
@@ -362,7 +364,14 @@ export function letterDetailPage(user: SessionUser, id: string, settings: ChildS
      ${syllables.length ? `<h2>Silben</h2><div class="chips">${syllables.map((s) => `<button class="chip say" data-say="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
      ${words.length ? `<h2>Wörter, die du lesen kannst</h2><div class="chips">${words.map((w) => `<button class="chip say" data-say="${esc(w.text)}">${w.img ? `${esc(w.img)} ` : ''}${esc(w.text)}</button>`).join('')}</div>` : ''}
      <p class="hint center">Tippe, dann hörst du es.</p>
-     ${known.has(id) ? `<p class="center"><a class="btn primary huge" href="/lernen/${encodeURIComponent(id)}">🎓 ${esc(g.label)} lernen ▶</a></p>` : ''}`,
+     ${
+       known.has(id)
+         ? `<p class="center"><a class="btn primary huge" href="/lernen/${encodeURIComponent(id)}">🎓 ${esc(g.label)} lernen ▶</a></p>`
+         : `<form method="post" action="/buchstaben/${encodeURIComponent(id)}/freischalten" class="center unlock">
+              <p class="big-hint">Hast du das ${esc(g.label)} schon in der Schule gelernt?</p>
+              <button class="btn primary huge">🔓 Ja, ${esc(g.label)} freischalten</button>
+            </form>`
+     }`,
     { user, back: '/buchstaben', scripts: ['/static/say.js'] },
   );
 }

@@ -13,11 +13,12 @@
   <Icon>https://raw.githubusercontent.com/Itguru279/LeselernProjekt/main/public/icon.svg</Icon>
   <Config Name="Web-Port" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
   <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/leselern" Mode="rw" Description="Datenbank (Fortschritt, Archiv). Wird vom Appdata-Backup mitgesichert." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/leselern</Config>
-  <Config Name="Admin-Passwort" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Passwort für den Admin, nur beim ersten Start benutzt. Leer lassen = zufälliges Passwort im Log." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Admin-Passwort" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Passwort für den Admin. Wird es geändert, gilt nach dem Neustart das neue Passwort. Leer lassen = beim ersten Start zufälliges Passwort im Log." Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Name des Kindes" Target="CHILD_NAME" Default="Ben" Mode="" Description="Nur beim ersten Start" Type="Variable" Display="always" Required="false" Mask="false">Ben</Config>
   <Config Name="Bilder-Code des Kindes" Target="CHILD_CODE" Default="hund,katze,frosch" Mode="" Description="Drei Tiere in Reihenfolge. Möglich: hund, katze, maus, frosch, fuchs, baer, hase, loewe, pinguin. Nur beim ersten Start, danach in den Einstellungen änderbar." Type="Variable" Display="always" Required="false" Mask="false">hund,katze,frosch</Config>
   <Config Name="Startbuchstaben" Target="START_LETTERS" Default="a,m,l,o,i,e" Mode="" Description="Nur beim ersten Start, danach im Menü Buchstaben änderbar" Type="Variable" Display="always" Required="false" Mask="false">a,m,l,o,i,e</Config>
   <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Bestimmt, wann ein neuer Lesetag beginnt" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="Log-Stufe" Target="LOG_LEVEL" Default="info" Mode="" Description="info = Aufrufe, Anmeldungen, Änderungen; debug = zusätzlich jede Datei und jedes Ergebnis; warn = nur Probleme" Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Benutzer für die Dateien (Unraid: 99)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppe für die Dateien (Unraid: 100)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
 </Container>

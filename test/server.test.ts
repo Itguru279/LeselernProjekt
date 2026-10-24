@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../src/db.ts';
 import { getSettings } from '../src/app.ts';
+import { setQuiet } from '../src/log.ts';
+
+setQuiet(true);
 import { bootstrap } from '../src/app.ts';
+import { hashSecret, verifySecret } from '../src/auth.ts';
 import { createApp } from '../src/server.ts';
 import { loadConfig } from '../src/config.ts';
 
@@ -50,7 +54,7 @@ test('Ben meldet sich mit dem Bilder-Code an', async () => {
   const menu = await fetch(base + '/menu', { headers: { cookie } });
   const html = await menu.text();
   assert.match(html, /Hallo Ben/);
-  assert.doesNotMatch(html, /Einstellungen/);
+  assert.doesNotMatch(html, /href="\/admin"/);
 
   const heute = await (await fetch(base + '/heute', { headers: { cookie } })).text();
   const data = JSON.parse(heute.match(/<script type="application\/json" id="player-data">(.*?)<\/script>/s)![1]);
@@ -196,4 +200,48 @@ test('alte Datenbank wird beim Start ergänzt, Daten bleiben erhalten', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('Ben kann Buchstaben freischalten, aber nicht entfernen', async () => {
+  const kid = sid(await post('/login/kind/2', { code: 'hund,katze,frosch' }));
+  const page = await (await fetch(base + '/buchstaben/u', { headers: { cookie: kid } })).text();
+  assert.match(page, /\/buchstaben\/u\/freischalten/);
+  const res = await post('/buchstaben/u/freischalten', {}, kid);
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.get('location'), '/lernen/u');
+  assert.ok(getSettings(db, 2).graphemes.includes('u'));
+  assert.equal(getSettings(db, 2).graphemes.at(-1), 'u');
+  const again = await post('/buchstaben/u/freischalten', {}, kid);
+  assert.equal(again.headers.get('location'), '/buchstaben');
+  const bogus = await post('/buchstaben/xyz/freischalten', {}, kid);
+  assert.equal(bogus.headers.get('location'), '/buchstaben');
+  // Entfernen bleibt Admin-Sache
+  assert.equal((await post('/buchstaben', { g: 'a' }, kid)).status, 403);
+  // Ben kommt vom Menü zum Erwachsenen-Login
+  const menu = await (await fetch(base + '/menu', { headers: { cookie: kid } })).text();
+  assert.match(menu, /href="\/login\/admin"/);
+});
+
+test('Admin-Passwort: neues ADMIN_PASSWORD gilt nach Neustart, Passwort aus den Einstellungen bleibt sonst', () => {
+  const d = openDb(':memory:');
+  const hash = () => (d.prepare("SELECT password_hash FROM users WHERE role = 'admin'").get() as { password_hash: string }).password_hash;
+  const start = (pw?: string) => bootstrap(d, loadConfig({ ADMIN_PASSWORD: pw, CHILD_NAME: 'Ben' }));
+  // erster Start ohne Passwort: zufällig
+  start();
+  const random = hash();
+  // später ADMIN_PASSWORD gesetzt -> übernommen (das war vermutlich Andres Fall)
+  start('  geheim123 ');
+  assert.notEqual(hash(), random);
+  assert.ok(verifySecret('geheim123', hash()));
+  // in den Einstellungen geändert, ADMIN_PASSWORD gleich -> bleibt
+  d.prepare("UPDATE users SET password_hash = ? WHERE role = 'admin'").run(hashSecret('ausdeneinstellungen'));
+  start('geheim123');
+  assert.ok(verifySecret('ausdeneinstellungen', hash()));
+  // ADMIN_PASSWORD geändert -> neues gilt
+  start('neu-456789');
+  assert.ok(verifySecret('neu-456789', hash()));
+  // ohne ADMIN_PASSWORD bleibt alles, wie es ist
+  start();
+  assert.ok(verifySecret('neu-456789', hash()));
+  d.close();
 });

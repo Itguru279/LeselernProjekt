@@ -59,7 +59,7 @@ Mit dem Plugin **Docker Compose Manager** (Community Applications):
 - Ben: auf „Ben“ tippen, dann 🐶 → 🐱 → 🐸.
 - Erwachsene: auf „Erwachsene“ tippen, Passwort eingeben.
 
-Wenn `ADMIN_PASSWORD` leer war, steht ein zufälliges Passwort im Log (Docker → Container-Icon → *Logs*).
+Wenn `ADMIN_PASSWORD` leer war, steht ein zufälliges Passwort im Log (Docker → Container-Icon → *Logs*). Beim Start zeigt das Log außerdem Version, Datenordner, Zeitzone, ob ein Admin-Passwort gesetzt ist und Bens Buchstaben.
 
 ## 4. Über Cloudflare erreichbar machen
 
@@ -93,7 +93,9 @@ Alle Daten stecken in `/mnt/user/appdata/leselern/leselern.db` (plus `-wal`/`-sh
 
 | Problem | Lösung |
 | --- | --- |
-| Admin-Passwort vergessen | Variable `RESET_ADMIN_PASSWORD=true` und neues `ADMIN_PASSWORD` setzen, Container neu starten, danach `RESET_ADMIN_PASSWORD` wieder entfernen. |
+| Admin-Login klappt nicht | Erst ins Log schauen (Docker → Container-Icon → *Logs*): Jeder Versuch steht dort mit Grund. Lösung fast immer: `ADMIN_PASSWORD` im Container auf ein neues Passwort setzen und *Apply* (Neustart). Im Log steht dann „Admin-Passwort auf ADMIN_PASSWORD gesetzt“. Ist Ben auf dem Gerät angemeldet, im Menü auf 🔑 *Erwachsene* tippen. Nach 5 Fehlversuchen ist der Login 60 Sekunden gesperrt. |
+| Admin-Passwort vergessen | `ADMIN_PASSWORD` auf ein neues Passwort ändern, Container neu starten. Wenn `ADMIN_PASSWORD` gleich bleiben soll: zusätzlich `RESET_ADMIN_PASSWORD=true`, nach dem Start wieder entfernen. |
+| Mehr Details im Log | Variable `LOG_LEVEL=debug` anlegen und neu starten. |
 | Bens Bilder-Code vergessen | Als Admin anmelden → Einstellungen → Bilder-Code neu setzen. |
 | „denied“ beim Image-Download | Image ist privat, siehe Schritt 1. |
 | Neuer Tag beginnt zur falschen Zeit | Variable `TZ` prüfen (Standard `Europe/Berlin`). |

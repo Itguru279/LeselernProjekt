@@ -17,7 +17,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dataDir: env.DATA_DIR ?? './data',
     timeZone: env.TZ_APP ?? env.TZ ?? 'Europe/Berlin',
     adminName: env.ADMIN_NAME ?? 'Admin',
-    adminPassword: env.ADMIN_PASSWORD || undefined,
+    // Leerzeichen am Anfang/Ende (z. B. aus Unraid kopiert) zählen nicht mit
+    adminPassword: env.ADMIN_PASSWORD?.trim() || undefined,
     childName: env.CHILD_NAME ?? 'Ben',
     childCode: env.CHILD_CODE ?? 'hund,katze,frosch',
     startLetters: (env.START_LETTERS ?? 'a,m,l,o,i,e')

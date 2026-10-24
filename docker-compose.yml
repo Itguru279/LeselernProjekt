@@ -13,7 +13,8 @@ services:
       - /mnt/user/appdata/leselern:/data
     environment:
       TZ: Europe/Berlin
-      ADMIN_PASSWORD: "bitte-aendern"   # nur beim allerersten Start benutzt
+      ADMIN_PASSWORD: "bitte-aendern"   # geändert + Neustart = neues Passwort
+      LOG_LEVEL: info                   # debug für noch mehr Details
       CHILD_NAME: Ben
       CHILD_CODE: hund,katze,frosch     # Bilder-Code für Ben (beim ersten Start)
       START_LETTERS: a,m,l,o,i,e

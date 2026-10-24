@@ -3,7 +3,9 @@
 import { randomBytes } from 'node:crypto';
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
-import { hashSecret, normalizeCode } from './auth.ts';
+import { hashSecret, normalizeCode, verifySecret } from './auth.ts';
+import { getMeta, setMeta } from './db.ts';
+import { log } from './log.ts';
 import { generateDailySet, clampTaskCount, type Task } from './generator/daily.ts';
 import { GRAPHEME_IDS } from './generator/graphemes.ts';
 
@@ -35,31 +37,7 @@ export interface StoredSet {
 export const STICKERS = ['🌟', '🦄', '🚀', '🐢', '🌈', '🍀', '🐙', '🦋', '🏆', '🎈', '🐳', '🦖', '🍓', '⚡', '🎵', '🐝', '🌻', '🦜', '🍩', '🧸'];
 
 export function bootstrap(db: Db, config: Config): void {
-  // Admin anlegen
-  const admin = db.prepare("SELECT id, password_hash FROM users WHERE role = 'admin' LIMIT 1").get() as
-    | { id: number; password_hash: string | null }
-    | undefined;
-  const reset = process.env.RESET_ADMIN_PASSWORD === 'true';
-  if (!admin || !admin.password_hash || reset) {
-    let password = config.adminPassword;
-    if (!password) {
-      password = randomBytes(9).toString('base64url');
-      console.log('================================================================');
-      console.log(` Kein ADMIN_PASSWORD gesetzt. Erzeugtes Admin-Passwort: ${password}`);
-      console.log(' Bitte notieren und nach dem ersten Login ändern.');
-      console.log('================================================================');
-    }
-    if (admin) {
-      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashSecret(password), admin.id);
-    } else {
-      db.prepare("INSERT INTO users (name, role, avatar, password_hash) VALUES (?, 'admin', '🔑', ?)").run(
-        config.adminName,
-        hashSecret(password),
-      );
-    }
-    if (reset) console.log('Admin-Passwort wurde zurückgesetzt (RESET_ADMIN_PASSWORD=true).');
-  }
-
+  setupAdmin(db, config);
   // Kind anlegen
   const child = db.prepare("SELECT id FROM users WHERE role = 'child' LIMIT 1").get() as { id: number } | undefined;
   if (!child) {
@@ -72,7 +50,66 @@ export function bootstrap(db: Db, config: Config): void {
       Number(info.lastInsertRowid),
       JSON.stringify(letters),
     );
+    log.info('start', 'Kind angelegt', { name: config.childName, buchstaben: letters.join(',') });
   }
+}
+
+const ENV_KEY = 'admin_env_password';
+
+/**
+ * Admin anlegen und Passwort setzen.
+ * - Erster Start: ADMIN_PASSWORD oder ein zufälliges Passwort (steht im Log).
+ * - Später: Wird ADMIN_PASSWORD geändert (oder zum ersten Mal gesetzt), gilt
+ *   beim nächsten Start das neue Passwort. Ein in den Einstellungen
+ *   geändertes Passwort bleibt, solange ADMIN_PASSWORD gleich bleibt.
+ */
+function setupAdmin(db: Db, config: Config): void {
+  const admin = db.prepare("SELECT id, password_hash FROM users WHERE role = 'admin' LIMIT 1").get() as
+    | { id: number; password_hash: string | null }
+    | undefined;
+  const env = config.adminPassword;
+  const reset = process.env.RESET_ADMIN_PASSWORD === 'true';
+  const remember = () => env && setMeta(db, ENV_KEY, hashSecret(env));
+
+  if (!admin || !admin.password_hash) {
+    let password = env;
+    if (!password) {
+      // Ohne leicht verwechselbare Zeichen (I l 1 O 0 - _), damit man es aus dem Log abtippen kann
+      const abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      password = [...randomBytes(12)].map((b) => abc[b % abc.length]).join('');
+      log.warn('admin', '================================================================');
+      log.warn('admin', `Kein ADMIN_PASSWORD gesetzt. Erzeugtes Admin-Passwort: ${password}`);
+      log.warn('admin', 'Bitte notieren. Ändern: ADMIN_PASSWORD setzen und Container neu starten.');
+      log.warn('admin', '================================================================');
+    }
+    if (admin) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashSecret(password), admin.id);
+    else {
+      db.prepare("INSERT INTO users (name, role, avatar, password_hash) VALUES (?, 'admin', '🔑', ?)").run(config.adminName, hashSecret(password));
+    }
+    remember();
+    log.info('admin', 'Admin angelegt (neue, leere Datenbank)', { quelle: env ? 'ADMIN_PASSWORD' : 'zufällig (siehe oben)' });
+    return;
+  }
+
+  if (!env) {
+    if (reset) log.warn('admin', 'RESET_ADMIN_PASSWORD=true, aber ADMIN_PASSWORD ist leer. Nichts geändert.');
+    log.info('admin', 'Kein ADMIN_PASSWORD gesetzt. Es gilt das bisherige Admin-Passwort (vom ersten Start oder aus den Einstellungen). Zurücksetzen: ADMIN_PASSWORD setzen und Container neu starten.');
+    return;
+  }
+  if (verifySecret(env, admin.password_hash)) {
+    remember();
+    log.info('admin', 'Admin-Passwort entspricht ADMIN_PASSWORD.', { länge: env.length });
+    return;
+  }
+  const known = getMeta(db, ENV_KEY);
+  if (reset || !known || !verifySecret(env, known)) {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashSecret(env), admin.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(admin.id);
+    remember();
+    log.warn('admin', 'Admin-Passwort auf ADMIN_PASSWORD gesetzt (neu oder geändert).', { länge: env.length });
+    return;
+  }
+  log.info('admin', 'Das Admin-Passwort wurde in den Einstellungen geändert und gilt weiter. ADMIN_PASSWORD ist unverändert und wird ignoriert. Zurücksetzen: ADMIN_PASSWORD ändern oder RESET_ADMIN_PASSWORD=true.');
 }
 
 export function children(db: Db): { id: number; name: string; avatar: string }[] {
@@ -280,4 +317,22 @@ export function helpStats(db: Db, userId: number): { total: number; withHelp: nu
     )
     .get(userId) as { total: number; withHelp: number | null; days: number };
   return { total: row.total, withHelp: row.withHelp ?? 0, days: row.days };
+}
+
+/**
+ * Buchstaben freischalten (auch durch das Kind). Die heutigen Aufgaben werden
+ * nur neu erzeugt, wenn heute noch nichts erledigt wurde, damit kein
+ * Fortschritt verloren geht. Gibt false zurück, wenn nichts zu tun war.
+ */
+export function unlockLetter(db: Db, userId: number, id: string, today: string): { added: boolean; regenerated: boolean } {
+  if (!GRAPHEME_IDS.has(id)) return { added: false, regenerated: false };
+  const before = getSettings(db, userId).graphemes;
+  if (before.includes(id)) return { added: false, regenerated: false };
+  setGraphemes(db, userId, [...before, id]);
+  const row = db
+    .prepare('SELECT COUNT(*) AS c FROM results r JOIN daily_sets d ON d.id = r.set_id WHERE d.user_id = ? AND d.date = ?')
+    .get(userId, today) as { c: number };
+  const regenerated = row.c === 0;
+  if (regenerated) regenerateToday(db, userId, today);
+  return { added: true, regenerated };
 }
