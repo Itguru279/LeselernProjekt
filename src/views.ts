@@ -4,8 +4,10 @@ import type { SessionUser } from './auth.ts';
 import { PICTURES } from './auth.ts';
 import type { ChildSettings, StoredSet } from './app.ts';
 import { GRAPHEMES, capitalOf, isDecodable, labelOf, segment } from './generator/graphemes.ts';
-import { SIMPLE_CONSONANTS, VOWELS, MIN_TASKS, MAX_TASKS } from './generator/daily.ts';
+import { SIMPLE_CONSONANTS, VOWELS, MIN_TASKS, MAX_TASKS, type Task } from './generator/daily.ts';
 import { WORDS } from './content/words.ts';
+import { LETTER_ORDER } from './content/letters.ts';
+import type { Series } from './content/stories.ts';
 
 export function esc(value: unknown): string {
   return String(value)
@@ -33,7 +35,7 @@ export function layout(title: string, body: string, opts: LayoutOptions = {}): s
   const user = opts.user;
   const top = user
     ? `<header class="top">
-        ${opts.back ? `<a class="btn-icon" href="${esc(opts.back)}" aria-label="Zurück">⬅️</a>` : '<span></span>'}
+        ${opts.back ? backButton(opts.back) : '<span></span>'}
         <span class="who">${esc(user.avatar)} ${esc(user.name)}</span>
         <form method="post" action="/logout"><button class="btn-icon" aria-label="Abmelden" title="Abmelden">🚪</button></form>
       </header>`
@@ -58,6 +60,25 @@ ${(opts.scripts ?? []).map((s) => `<script type="module" src="${esc(s)}"></scrip
 </body>
 </html>`;
 }
+
+/** Großer Zurück-Knopf. In Aufgaben übernimmt player.js ihn (ein Schritt zurück). */
+function backButton(href: string): string {
+  return `<a class="btn-back" id="back-btn" href="${esc(href)}" aria-label="Zurück"><span aria-hidden="true">⬅️</span> Zurück</a>`;
+}
+
+/** Name und Bild jeder Aufgabenart (für Menü, Übungsliste und Archiv). */
+export const TASK_INFO: Record<Task['type'], { title: string; emoji: string }> = {
+  silben: { title: 'Leserutsche', emoji: '🛝' },
+  'wort-bild': { title: 'Welches Bild passt?', emoji: '🖼️' },
+  'bild-wort': { title: 'Welches Wort passt?', emoji: '🔠' },
+  blitz: { title: 'Blitzlesen', emoji: '⚡' },
+  wortkette: { title: 'Wörterkette', emoji: '🔗' },
+  buchstabe: { title: 'Buchstaben finden', emoji: '🔍' },
+  laut: { title: 'Neuer Buchstabe', emoji: '👂' },
+  anlaut: { title: 'Womit fängt es an?', emoji: '🔤' },
+  satz: { title: 'Satz lesen', emoji: '📝' },
+  geschichte: { title: 'Geschichte', emoji: '📖' },
+};
 
 // ---------- Login ----------
 
@@ -95,7 +116,7 @@ export function childCodePage(kid: { id: number; name: string; avatar: string },
         <input type="hidden" name="code" id="code-input">
       </form>
       <div class="pic-grid">${grid}</div>
-      <p><a class="link-quiet" href="/login">⬅️ zurück</a></p>
+      <p>${backButton('/login')}</p>
     </div>`,
     { bodyClass: 'login', scripts: ['/static/login.js'] },
   );
@@ -112,7 +133,7 @@ export function adminLoginPage(error: string | null, lockedSeconds: number): str
         <label>Passwort <input type="password" name="password" autocomplete="current-password" required autofocus></label>
         <button class="btn primary">Anmelden</button>
       </form>
-      <p><a class="link-quiet" href="/login">⬅️ zurück</a></p>
+      <p>${backButton('/login')}</p>
     </div>`,
     { bodyClass: 'login' },
   );
@@ -120,61 +141,159 @@ export function adminLoginPage(error: string | null, lockedSeconds: number): str
 
 // ---------- Menü ----------
 
+export interface TodayStatus {
+  done: number;
+  total: number;
+  practiceDone: number;
+  practiceTotal: number;
+  storyDone: boolean;
+  hasStory: boolean;
+}
+
 export function menuPage(
   user: SessionUser,
   child: { name: string },
-  today: { done: number; total: number },
+  today: TodayStatus,
   stickers: { emoji: string }[],
+  newest: string | null,
 ): string {
   const finished = today.total > 0 && today.done >= today.total;
   const progress = today.total
     ? `<span class="progress-dots">${Array.from({ length: today.total }, (_, i) => `<i class="${i < today.done ? 'on' : ''}"></i>`).join('')}</span>`
     : '';
-  const adminTile =
+  const adminTiles =
     user.role === 'admin'
-      ? `<a class="tile" href="/admin"><span class="tile-emoji">⚙️</span><span class="tile-label">Einstellungen</span></a>`
-      : '';
+      ? `<a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Buchstaben wählen</span></a>
+         <a class="tile" href="/admin"><span class="tile-emoji">⚙️</span><span class="tile-label">Einstellungen</span></a>`
+      : `<a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Meine Buchstaben</span></a>`;
+  const practiceAllDone = today.practiceTotal > 0 && today.practiceDone >= today.practiceTotal;
   return layout(
     'Menü',
     `<h1 class="center">${user.role === 'admin' ? `Lesen mit ${esc(child.name)}` : `Hallo ${esc(child.name)}!`}</h1>
      <div class="tiles">
        <a class="tile big today ${finished ? 'finished' : ''}" href="/heute">
-         <span class="tile-emoji">${finished ? '🏆' : '📖'}</span>
+         <span class="tile-emoji">${finished ? '🏆' : '⭐'}</span>
          <span class="tile-label">Heute lesen</span>
+         <span class="tile-sub">alles nacheinander</span>
          ${progress}
        </a>
-       <a class="tile" href="/buchstaben"><span class="tile-emoji">🔤</span><span class="tile-label">Buchstaben</span></a>
+       <a class="tile tile-learn" href="/lernen">
+         <span class="tile-emoji">🎓</span><span class="tile-label">Lernen</span>
+         <span class="tile-sub">${newest ? `Neu: ${esc(labelOf(newest))}` : 'Buchstaben'}</span>
+       </a>
+       <a class="tile tile-practice ${practiceAllDone ? 'finished' : ''}" href="/ueben">
+         <span class="tile-emoji">${practiceAllDone ? '✅' : '🏋️'}</span><span class="tile-label">Üben</span>
+         <span class="tile-sub">${today.practiceDone} von ${today.practiceTotal}</span>
+       </a>
+       ${
+         today.hasStory
+           ? `<a class="tile tile-story ${today.storyDone ? 'finished' : ''}" href="/heute?teil=geschichte">
+                <span class="tile-emoji">${today.storyDone ? '✅' : '📖'}</span><span class="tile-label">Geschichte</span>
+                <span class="tile-sub">von heute</span>
+              </a>`
+           : ''
+       }
        <a class="tile" href="/archiv"><span class="tile-emoji">📚</span><span class="tile-label">Alle Geschichten</span></a>
-       ${adminTile}
+       ${adminTiles}
      </div>
      <section class="stickers" aria-label="Sticker">
        <h2>Meine Sticker</h2>
-       <div class="sticker-row">${stickers.length ? stickers.map((s) => `<span>${esc(s.emoji)}</span>`).join('') : '<span class="hint">Noch keine. Lies heute, dann bekommst du einen!</span>'}</div>
+       <div class="sticker-row">${stickers.length ? stickers.map((s) => `<span>${esc(s.emoji)}</span>`).join('') : '<span class="hint">Noch keine. Wenn du heute alles schaffst, bekommst du einen!</span>'}</div>
      </section>`,
     { user },
   );
 }
 
+// ---------- Üben ----------
+
+export function practicePage(user: SessionUser, set: StoredSet, done: number[]): string {
+  const doneSet = new Set(done);
+  const items = set.tasks
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => t.type !== 'geschichte');
+  const tiles = items
+    .map(({ t, i }) => {
+      const info = TASK_INFO[t.type];
+      const ok = doneSet.has(i);
+      return `<a class="tile ${ok ? 'finished' : ''}" href="/heute?nur=${i}">
+        <span class="tile-emoji">${ok ? '✅' : info.emoji}</span>
+        <span class="tile-label">${esc(info.title)}</span>
+      </a>`;
+    })
+    .join('');
+  return layout(
+    'Üben',
+    `<h1 class="center">Üben</h1>
+     <p class="hint center">Such dir eine Übung aus. Oder mach alle nacheinander.</p>
+     <p class="center"><a class="btn primary huge" href="/heute?teil=ueben">Alle nacheinander ▶</a></p>
+     <div class="tiles">${tiles || '<p class="hint center">Heute gibt es keine Übungen.</p>'}</div>`,
+    { user, back: '/menu' },
+  );
+}
+
+// ---------- Lernen ----------
+
+export function learnPage(user: SessionUser, settings: ChildSettings): string {
+  const known = settings.graphemes;
+  const newest = known[known.length - 1];
+  const knownTiles = known
+    .map((id) => {
+      const g = GRAPHEMES.find((x) => x.id === id);
+      if (!g) return '';
+      return `<a class="letter on ${id === newest ? 'newest' : ''}" href="/lernen/${encodeURIComponent(id)}">
+        <span class="letter-big">${esc(g.label)}</span>${id === newest ? '<span class="letter-new">NEU</span>' : ''}</a>`;
+    })
+    .join('');
+  // Die nächsten Buchstaben der Fibel: noch verschlossen
+  const upcoming = LETTER_ORDER.filter((id) => !known.includes(id))
+    .slice(0, 4)
+    .map((id) => `<span class="letter off" aria-label="${esc(labelOf(id))} kommt noch"><span class="letter-big">${esc(labelOf(id))}</span><span class="lock">🔒</span></span>`)
+    .join('');
+  return layout(
+    'Lernen',
+    `<h1 class="center">Lernen</h1>
+     <p class="hint center">Tippe auf einen Buchstaben. Dann lernst und übst du genau diesen Buchstaben.</p>
+     <div class="letters">${knownTiles}${upcoming}</div>
+     ${upcoming ? '<p class="hint center">🔒 Diese Buchstaben kommen bald dazu.</p>' : ''}`,
+    { user, back: '/menu' },
+  );
+}
+
 // ---------- Aufgaben ----------
 
-export function playerPage(
-  user: SessionUser,
-  set: StoredSet,
-  done: number[],
-  settings: ChildSettings,
-  opts: { title: string; back: string; isToday: boolean },
-): string {
+export interface PlayerOptions {
+  title: string;
+  back: string;
+  isToday: boolean; // Ergebnisse zählen für den heutigen Sticker
+  setId: number | null; // null = nur üben, nichts speichern
+  tasks: Task[];
+  done: number[];
+  only?: number[]; // nur diese Aufgaben spielen
+  skipStart?: boolean; // direkt mit der ersten Aufgabe beginnen
+  againUrl?: string; // "Noch eine Runde"
+  startTitle?: string;
+  startEmoji?: string;
+}
+
+export function playerPage(user: SessionUser, settings: ChildSettings, opts: PlayerOptions): string {
   return layout(
     opts.title,
     `<div id="player" class="player" aria-live="polite"></div>
      <noscript><p class="error">Bitte JavaScript einschalten.</p></noscript>
      ${jsonScript('player-data', {
-       setId: set.id,
-       tasks: set.tasks,
-       done,
+       setId: opts.setId,
+       tasks: opts.tasks,
+       done: opts.done,
+       only: opts.only ?? null,
+       skipStart: opts.skipStart ?? false,
        syllableArcs: settings.syllableArcs,
+       readAloud: settings.readAloud,
+       adultTap: settings.adultTap,
        isToday: opts.isToday,
        backUrl: opts.back,
+       againUrl: opts.againUrl ?? null,
+       startTitle: opts.startTitle ?? opts.title,
+       startEmoji: opts.startEmoji ?? '📖',
        isAdmin: user.role === 'admin',
      })}`,
     { user, back: opts.back, bodyClass: 'play', scripts: ['/static/player.js'] },
@@ -242,22 +361,13 @@ export function letterDetailPage(user: SessionUser, id: string, settings: ChildS
      </div>
      ${syllables.length ? `<h2>Silben</h2><div class="chips">${syllables.map((s) => `<button class="chip say" data-say="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
      ${words.length ? `<h2>Wörter, die du lesen kannst</h2><div class="chips">${words.map((w) => `<button class="chip say" data-say="${esc(w.text)}">${w.img ? `${esc(w.img)} ` : ''}${esc(w.text)}</button>`).join('')}</div>` : ''}
-     <p class="hint center">Tippe, dann hörst du es.</p>`,
+     <p class="hint center">Tippe, dann hörst du es.</p>
+     ${known.has(id) ? `<p class="center"><a class="btn primary huge" href="/lernen/${encodeURIComponent(id)}">🎓 ${esc(g.label)} lernen ▶</a></p>` : ''}`,
     { user, back: '/buchstaben', scripts: ['/static/say.js'] },
   );
 }
 
 // ---------- Archiv ----------
-
-const TYPE_NAMES: Record<string, string> = {
-  silben: 'Silben',
-  'wort-bild': 'Wort und Bild',
-  'bild-wort': 'Bild und Wort',
-  blitz: 'Blitzlesen',
-  wortkette: 'Wörterkette',
-  buchstabe: 'Buchstaben finden',
-  geschichte: 'Geschichte',
-};
 
 function dateLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
@@ -269,7 +379,31 @@ export function letterChips(letters: string[]): string {
   return `<span class="letter-chips">${letters.map((l) => `<span class="lchip">${esc(labelOf(l))}</span>`).join('')}</span>`;
 }
 
-export function archivePage(user: SessionUser, sets: StoredSet[], filter: string | null): string {
+export interface ShelfItem {
+  series: Series;
+  readable: number[]; // Folgen, die das Kind schon öffnen darf
+}
+
+function shelf(items: ShelfItem[]): string {
+  if (!items.length) return '';
+  const cards = items
+    .map(({ series, readable }) => {
+      const eps = series.episodes
+        .map((ep) =>
+          readable.includes(ep.number)
+            ? `<a class="lchip ep" href="/geschichte/${encodeURIComponent(series.id)}/${ep.number}">${esc(ep.cover)} ${ep.number}</a>`
+            : `<span class="lchip ep locked" aria-label="Folge ${ep.number} kommt noch">🔒 ${ep.number}</span>`,
+        )
+        .join('');
+      return `<div class="shelf-item"><span class="shelf-cover">${esc(series.cover)}</span>
+        <span class="shelf-title">${esc(series.title)}</span><span class="shelf-eps">${eps}</span></div>`;
+    })
+    .join('');
+  return `<section class="shelf" aria-label="Bücherregal"><h2>📚 Bücherregal</h2>
+    <p class="hint">Gelesene Folgen kannst du hier noch einmal lesen. Neue Folgen gibt es jeden Tag bei „Geschichte“.</p>${cards}</section>`;
+}
+
+export function archivePage(user: SessionUser, sets: StoredSet[], filter: string | null, shelfItems: ShelfItem[] = []): string {
   const filtered = filter ? sets.filter((s) => s.letters.includes(filter)) : sets;
   const allLetters = GRAPHEMES.map((g) => g.id).filter((id) => sets.some((s) => s.letters.includes(id)));
   const filterBar = allLetters.length
@@ -285,7 +419,7 @@ export function archivePage(user: SessionUser, sets: StoredSet[], filter: string
         story && story.type === 'geschichte'
           ? story.choices.map((c) => `${esc(c.cover)} ${esc(c.seriesTitle)}: ${esc(c.title)}`).join(' · ')
           : '';
-      const types = [...new Set(s.tasks.map((t) => TYPE_NAMES[t.type]))].join(', ');
+      const types = [...new Set(s.tasks.map((t) => TASK_INFO[t.type]?.title ?? t.type))].join(', ');
       return `<a class="archive-item" href="/archiv/${s.id}">
         <span class="archive-date">${esc(dateLabel(s.date))}${s.version ? ` (Version ${s.version + 1})` : ''} ${s.completedAt ? '✅' : ''}</span>
         ${storyTitles ? `<span class="archive-story">${storyTitles}</span>` : ''}
@@ -297,7 +431,9 @@ export function archivePage(user: SessionUser, sets: StoredSet[], filter: string
   return layout(
     'Alle Geschichten',
     `<h1 class="center">Alle Geschichten und Aufgaben</h1>
-     <p class="hint center">Alles, was schon da war, kannst du noch einmal lesen. Die Kästchen zeigen, welche Buchstaben darin vorkommen.</p>
+     ${shelf(shelfItems)}
+     <h2>📅 Alle Tage</h2>
+     <p class="hint">Alles, was schon da war, kannst du noch einmal lesen. Die Kästchen zeigen, welche Buchstaben darin vorkommen.</p>
      ${filterBar}
      <div class="archive">${items || '<p class="hint center">Noch nichts da. Fang mit „Heute lesen“ an!</p>'}</div>`,
     { user, back: '/menu' },
@@ -338,6 +474,31 @@ export function adminPage(
          <label class="check"><input type="checkbox" name="arcs" ${settings.syllableArcs ? 'checked' : ''}> Silbenbögen unter den Wörtern anzeigen</label>
          <button class="btn primary">Speichern</button>
        </form>
+     </section>
+
+     <section class="card">
+       <h2>Vorlesen beim Antippen</h2>
+       <p class="hint">Gilt für alles, was ${esc(child.name)} selbst lesen soll: die schwarzen Wörter in den Geschichten
+         und den Knopf 🔊 in den Übungen. Bei „erst nach 15 Sekunden“ muss ${esc(child.name)} es zuerst selbst versuchen;
+         in den Übungen erscheint die Hilfe außerdem nach einem Fehler.</p>
+       <form method="post" action="/admin/vorlesen" class="form">
+         ${[
+           ['an', 'sofort (Antippen liest das Wort vor)'],
+           ['spaeter', 'erst nach 15 Sekunden'],
+           ['aus', 'aus (nichts wird vorgelesen)'],
+         ]
+           .map(
+             ([v, l]) =>
+               `<label class="check"><input type="radio" name="mode" value="${v}" ${settings.readAloud === v ? 'checked' : ''}> ${esc(l)}</label>`,
+           )
+           .join('')}
+         <label class="check"><input type="checkbox" name="adult" ${settings.adultTap ? 'checked' : ''}> Grauen Vorlesetext antippen zum Anhören (für Erwachsene)</label>
+         <button class="btn primary">Speichern</button>
+       </form>
+     </section>
+
+     <section class="card">
+       <h2>Heutige Aufgaben</h2>
        <form method="post" action="/admin/neu" class="form">
          <p class="hint">Erzeugt die heutigen Aufgaben neu, zum Beispiel nach neuen Buchstaben. Die alten bleiben im Archiv.</p>
          <button class="btn">Heutige Aufgaben neu erzeugen</button>

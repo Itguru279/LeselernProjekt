@@ -1,15 +1,19 @@
 // Zeigt die Aufgaben eines Tages als Text an, ohne Server und Datenbank.
 // Aufruf: npm run vorschau -- [buchstaben] [datum] [anzahl]
 // Beispiel: npm run vorschau -- a,m,l,o,i,e 2026-10-24 7
+// Lernaufgaben zu einem Buchstaben: npm run vorschau -- a,m,l,o,i,e,u 2026-10-24 lernen:u
 
-import { generateDailySet, type Task } from '../src/generator/daily.ts';
+import { generateDailySet, generateLesson, type Task } from '../src/generator/daily.ts';
 import { labelOf } from '../src/generator/graphemes.ts';
 
 const [lettersArg = 'a,m,l,o,i,e', dateArg, countArg = '7'] = process.argv.slice(2);
 const known = lettersArg.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const date = dateArg ?? new Date().toISOString().slice(0, 10);
 
-const set = generateDailySet({ userId: 1, date, known, taskCount: Number(countArg), storyProgress: {} });
+const lessonLetter = countArg.startsWith('lernen:') ? countArg.slice('lernen:'.length) : null;
+const set = lessonLetter
+  ? generateLesson({ userId: 1, date, letter: lessonLetter, known })
+  : generateDailySet({ userId: 1, date, known, taskCount: Number(countArg), storyProgress: {} });
 
 function describe(t: Task): string {
   switch (t.type) {
@@ -25,6 +29,12 @@ function describe(t: Task): string {
       return `Wörterkette: ${t.words.join(' – ')}`;
     case 'buchstabe':
       return `Finde alle ${t.target.toUpperCase()} ${t.target}: ${t.grid.join(' ')}`;
+    case 'laut':
+      return `Neuer Buchstabe ${t.target}: „${t.say}“ (${t.img} ${t.word})`;
+    case 'anlaut':
+      return `Womit fängt es an? ${t.target.toUpperCase()}: ${t.options.map((o) => o.img + ' ' + o.word + (o.correct ? '✓' : '')).join('  ')}`;
+    case 'satz':
+      return `Satz lesen: „${t.text}“  ${t.options.map((o) => o.img + (o.correct ? '✓' : '')).join('  ')}`;
     case 'geschichte':
       return t.choices
         .map((c) => {

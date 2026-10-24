@@ -6,6 +6,8 @@
 // wird automatisch zum Vorlese-Wort. So passt jede Folge zu jedem
 // Lernstand: Je mehr Buchstaben das Kind kann, desto mehr liest es selbst.
 
+import { STUFEN_SERIES } from './stories-stufen.ts';
+
 export interface StoryQuestion {
   text: string; // wird vorgelesen
   options: { img: string; label: string; correct?: boolean }[];
@@ -25,6 +27,9 @@ export interface Series {
   id: string;
   title: string;
   cover: string;
+  // Buchstabe, ab dem die Serie gedacht ist (siehe LETTER_ORDER). Ohne Angabe:
+  // passt zu jedem Lernstand, nicht lesbare Klammer-Wörter werden Vorlesetext.
+  level?: string;
   episodes: Episode[];
 }
 
@@ -228,7 +233,7 @@ const emil: Series = {
   ],
 };
 
-export const SERIES: Series[] = [lola, emil];
+export const SERIES: Series[] = [lola, emil, ...STUFEN_SERIES];
 
 export function findEpisode(series: string, number: number): Episode | undefined {
   return SERIES.find((s) => s.id === series)?.episodes.find((e) => e.number === number);

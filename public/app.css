@@ -124,6 +124,32 @@ a {
   box-shadow: var(--shadow);
 }
 
+/* Großer Zurück-Knopf (auf jeder Seite oben links) */
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--ink);
+  background: var(--card);
+  border: 3px solid var(--accent);
+  border-radius: 18px;
+  min-height: 60px;
+  padding: 8px 20px 8px 14px;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.btn-back span {
+  font-size: 1.7rem;
+}
+.btn-back:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+
 /* ---------- Knöpfe ---------- */
 .btn {
   display: inline-block;
@@ -190,9 +216,24 @@ a {
 .tile.today {
   border-color: var(--accent);
 }
+.tile.finished,
 .tile.today.finished {
   border-color: var(--good);
   background: var(--good-bg);
+}
+.tile.tile-learn {
+  border-color: #9aa7ff;
+}
+.tile.tile-practice {
+  border-color: #f2c14e;
+}
+.tile.tile-story {
+  border-color: #e98bc0;
+}
+.tile-sub {
+  display: block;
+  color: var(--quiet);
+  font-size: 0.95rem;
 }
 .login .tiles .tile.big {
   grid-column: auto;
@@ -358,6 +399,25 @@ input[type='checkbox'] {
 }
 .letter.off {
   opacity: 0.45;
+}
+a.letter {
+  text-decoration: none;
+  color: var(--ink);
+}
+.letter.newest {
+  border-color: var(--accent);
+  border-width: 4px;
+}
+.letter-new {
+  position: absolute;
+  right: 6px;
+  top: 2px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 8px;
+  padding: 0 6px;
 }
 .letter input {
   position: absolute;
@@ -707,6 +767,60 @@ button:disabled {
 .story-line.past .seg.child {
   font-size: 1.6rem;
 }
+span.seg {
+  cursor: default;
+}
+.seg.child.locked {
+  cursor: default;
+}
+.big-sentence {
+  font-size: 2.6rem;
+  text-align: center;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+.adult-text {
+  color: var(--adult);
+}
+.adult-tip {
+  max-width: 32em;
+}
+
+/* ---------- Bücherregal ---------- */
+.shelf {
+  margin-bottom: 18px;
+}
+.shelf-item {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 2px 12px;
+  align-items: center;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.shelf-cover {
+  grid-row: span 2;
+  font-size: 2.6rem;
+  text-align: center;
+}
+.shelf-title {
+  font-weight: 700;
+}
+.shelf-eps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lchip.ep {
+  font-size: 1.1rem;
+  padding: 4px 10px;
+}
+.lchip.ep.locked {
+  opacity: 0.5;
+}
 .question {
   font-size: 1.6rem;
   font-weight: 700;
@@ -783,6 +897,14 @@ button:disabled {
   }
   .seg.child {
     font-size: 2rem;
+  }
+  .big-sentence {
+    font-size: 2rem;
+  }
+  .btn-back {
+    font-size: 1.1rem;
+    min-height: 56px;
+    padding: 6px 14px 6px 10px;
   }
   .slide-block {
     font-size: 3rem;

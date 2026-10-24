@@ -12,7 +12,13 @@ export interface ChildSettings {
   graphemes: string[];
   tasksPerDay: number;
   syllableArcs: boolean;
+  readAloud: ReadAloud; // Vorlesen beim Antippen von Wörtern, die das Kind selbst lesen soll
+  adultTap: boolean; // grauen Vorlesetext antippen zum Anhören
 }
+
+/** an = sofort, spaeter = erst nach einer Wartezeit, aus = nie. */
+export type ReadAloud = 'an' | 'spaeter' | 'aus';
+export const READ_ALOUD_MODES: ReadAloud[] = ['an', 'spaeter', 'aus'];
 
 export interface StoredSet {
   id: number;
@@ -79,18 +85,25 @@ export function children(db: Db): { id: number; name: string; avatar: string }[]
 
 export function getSettings(db: Db, userId: number): ChildSettings {
   const row = db.prepare('SELECT * FROM child_settings WHERE user_id = ?').get(userId) as
-    | { user_id: number; graphemes: string; tasks_per_day: number; syllable_arcs: number }
+    | { user_id: number; graphemes: string; tasks_per_day: number; syllable_arcs: number; read_aloud: string; adult_tap: number }
     | undefined;
   if (!row) {
     db.prepare('INSERT INTO child_settings (user_id) VALUES (?)').run(userId);
-    return { userId, graphemes: [], tasksPerDay: 7, syllableArcs: true };
+    return { userId, graphemes: [], tasksPerDay: 7, syllableArcs: true, readAloud: 'an', adultTap: true };
   }
   return {
     userId,
     graphemes: JSON.parse(row.graphemes),
     tasksPerDay: row.tasks_per_day,
     syllableArcs: row.syllable_arcs === 1,
+    readAloud: READ_ALOUD_MODES.includes(row.read_aloud as ReadAloud) ? (row.read_aloud as ReadAloud) : 'an',
+    adultTap: row.adult_tap === 1,
   };
+}
+
+export function setReadAloud(db: Db, userId: number, mode: string, adultTap: boolean): void {
+  const m = READ_ALOUD_MODES.includes(mode as ReadAloud) ? mode : 'an';
+  db.prepare('UPDATE child_settings SET read_aloud = ?, adult_tap = ? WHERE user_id = ?').run(m, adultTap ? 1 : 0, userId);
 }
 
 export function setGraphemes(db: Db, userId: number, graphemes: string[]): void {
@@ -139,7 +152,7 @@ export function listSets(db: Db, userId: number): StoredSet[] {
   ).map(rowToSet);
 }
 
-function storyProgress(db: Db, userId: number): Record<string, number> {
+export function storyProgress(db: Db, userId: number): Record<string, number> {
   const rows = db.prepare('SELECT series, episode_done FROM story_progress WHERE user_id = ?').all(userId) as {
     series: string;
     episode_done: number;

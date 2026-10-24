@@ -52,3 +52,14 @@ Tipps:
 - Eine Folge wird nur angeboten, wenn das Kind darin mindestens zwei Wörter selbst lesen kann.
 
 Mit `npm run vorschau -- a,m,l,o,i,e,n,t 2026-11-01 7` siehst du, wie eine Folge bei einem bestimmten Lernstand aussieht (fett = liest das Kind).
+
+## Serien je Buchstabenstufe (`src/content/stories-stufen.ts`)
+
+Serien mit `level` (z. B. `level: 'u'`) werden erst angeboten, wenn dieser Buchstabe freigeschaltet ist. Hier gilt eine strengere Regel: **jedes** Wort in Klammern muss mit den Buchstaben bis einschließlich dieser Stufe (Reihenfolge `LETTER_ORDER` in `src/content/letters.ts`) lesbar sein, sonst schlägt `npm test` fehl. Vorsicht bei Lautgruppen: „Aua“ enthält `au`, „Lilie“ enthält `ie`, „Stern“ beginnt mit `St`.
+
+## Sätze und Lernaufgaben (`src/content/letters.ts`)
+
+- `SENTENCES`: kurzer Satz, richtiges Bild, zwei falsche Bilder, `level` wie oben.
+- Laut-Hinweise (`say`, `tip`) je Buchstabe. Konsonanten als Laut („mmm“), nicht als Buchstabenname („em“).
+
+Vorschau einer Lernrunde: `npm run vorschau -- a,m,l,o,i,e,u 2026-11-01 lernen:u`

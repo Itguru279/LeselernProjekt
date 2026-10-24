@@ -30,13 +30,19 @@ import {
   recordResult,
   regenerateToday,
   setGraphemes,
+  setReadAloud,
   setSyllableArcs,
+  storyProgress,
   setTasksPerDay,
   stickersOf,
   todayIn,
 } from './app.ts';
 import * as V from './views.ts';
 import { dropPrivileges } from './privileges.ts';
+import { generateLesson, eligibleSeries } from './generator/daily.ts';
+import { labelOf } from './generator/graphemes.ts';
+import { renderEpisode } from './generator/story.ts';
+import { SERIES } from './content/stories.ts';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC_DIR = join(ROOT, 'public');
@@ -124,6 +130,18 @@ export function createApp(db: Db, config = loadConfig()) {
     return children(db)[0];
   }
 
+  /** Bücherregal: Kinder sehen gelesene Folgen passender Serien, Erwachsene alles. */
+  function shelfItems(user: SessionUser, childId: number, known: string[]): V.ShelfItem[] {
+    if (user.role === 'admin') {
+      return SERIES.map((series) => ({ series, readable: series.episodes.map((e) => e.number) }));
+    }
+    const progress = storyProgress(db, childId);
+    return eligibleSeries(known, progress)
+      .sort((a, b) => a.i - b.i)
+      .filter((x) => x.done > 0)
+      .map(({ series, done }) => ({ series, readable: series.episodes.filter((e) => e.number <= done).map((e) => e.number) }));
+  }
+
   // Kurze Hinweise nach Formularen (über die URL, damit nichts gespeichert werden muss)
   const FLASH: Record<string, string> = {
     gespeichert: 'Gespeichert.',
@@ -131,6 +149,7 @@ export function createApp(db: Db, config = loadConfig()) {
     code: 'Der Bilder-Code wurde geändert.',
     passwort: 'Das Passwort wurde geändert.',
     buchstaben: 'Buchstaben gespeichert. Die heutigen Aufgaben wurden neu erzeugt.',
+    vorlesen: 'Vorlese-Einstellung gespeichert.',
   };
   const ERRORS: Record<string, string> = {
     code: 'Bitte drei Tiere auswählen.',
@@ -210,16 +229,117 @@ export function createApp(db: Db, config = loadConfig()) {
 
     if (path === '/' || path === '/menu') {
       const set = getOrCreateToday(db, child.id, today);
-      const done = doneIndices(db, set.id).length;
-      return send(res, 200, V.menuPage(user, child, { done, total: set.tasks.length }, stickersOf(db, child.id)));
+      const done = new Set(doneIndices(db, set.id));
+      const storyIndex = set.tasks.findIndex((t) => t.type === 'geschichte');
+      const practice = set.tasks.map((t, i) => ({ t, i })).filter(({ t }) => t.type !== 'geschichte');
+      const status: V.TodayStatus = {
+        done: done.size,
+        total: set.tasks.length,
+        practiceDone: practice.filter(({ i }) => done.has(i)).length,
+        practiceTotal: practice.length,
+        hasStory: storyIndex >= 0,
+        storyDone: storyIndex >= 0 && done.has(storyIndex),
+      };
+      const known = getSettings(db, child.id).graphemes;
+      return send(res, 200, V.menuPage(user, child, status, stickersOf(db, child.id), known.at(-1) ?? null));
     }
 
     if (path === '/heute' && method === 'GET') {
       const set = getOrCreateToday(db, child.id, today);
+      const settings = getSettings(db, child.id);
+      const teil = url.searchParams.get('teil');
+      const nur = url.searchParams.get('nur');
+      const all = set.tasks.map((_, i) => i);
+      let only: number[] | undefined;
+      let back = '/menu';
+      let title = 'Heute lesen';
+      let skipStart = false;
+      if (nur !== null && /^\d+$/.test(nur) && Number(nur) < set.tasks.length) {
+        only = [Number(nur)];
+        back = set.tasks[only[0]].type === 'geschichte' ? '/menu' : '/ueben';
+        title = V.TASK_INFO[set.tasks[only[0]].type].title;
+        skipStart = true;
+      } else if (teil === 'ueben') {
+        only = all.filter((i) => set.tasks[i].type !== 'geschichte');
+        back = '/ueben';
+        title = 'Üben';
+      } else if (teil === 'geschichte') {
+        only = all.filter((i) => set.tasks[i].type === 'geschichte');
+        title = 'Geschichte';
+        skipStart = true;
+      }
       return send(
         res,
         200,
-        V.playerPage(user, set, doneIndices(db, set.id), getSettings(db, child.id), { title: 'Heute lesen', back: '/menu', isToday: true }),
+        V.playerPage(user, settings, {
+          title,
+          back,
+          isToday: true,
+          setId: set.id,
+          tasks: set.tasks,
+          done: doneIndices(db, set.id),
+          only,
+          skipStart,
+          startTitle: title,
+          startEmoji: teil === 'ueben' ? '🏋️' : '⭐',
+        }),
+      );
+    }
+
+    if (path === '/ueben' && method === 'GET') {
+      const set = getOrCreateToday(db, child.id, today);
+      return send(res, 200, V.practicePage(user, set, doneIndices(db, set.id)));
+    }
+
+    if (path === '/lernen' && method === 'GET') {
+      return send(res, 200, V.learnPage(user, getSettings(db, child.id)));
+    }
+
+    const learnMatch = path.match(/^\/lernen\/([^/]+)$/);
+    if (learnMatch && method === 'GET') {
+      const id = decodeURIComponent(learnMatch[1]);
+      const settings = getSettings(db, child.id);
+      if (!settings.graphemes.includes(id)) return redirect(res, '/lernen');
+      const round = Math.min(999, Math.max(0, Number(url.searchParams.get('runde')) || 0));
+      const lesson = generateLesson({ userId: child.id, date: today, letter: id, known: settings.graphemes, round });
+      return send(
+        res,
+        200,
+        V.playerPage(user, settings, {
+          title: `Lernen: ${labelOf(id)}`,
+          back: '/lernen',
+          isToday: false,
+          setId: null,
+          tasks: lesson.tasks,
+          done: [],
+          againUrl: `/lernen/${encodeURIComponent(id)}?runde=${round + 1}`,
+          startTitle: `${labelOf(id)} lernen`,
+          startEmoji: '🎓',
+        }),
+      );
+    }
+
+    const storyMatch = path.match(/^\/geschichte\/([a-z0-9-]+)\/(\d+)$/);
+    if (storyMatch && method === 'GET') {
+      const series = SERIES.find((x) => x.id === storyMatch[1]);
+      const ep = series?.episodes.find((e) => e.number === Number(storyMatch[2]));
+      const settings = getSettings(db, child.id);
+      if (!series || !ep) return send(res, 404, V.notFoundPage(user));
+      const readable = shelfItems(user, child.id, settings.graphemes).find((x) => x.series.id === series.id)?.readable ?? [];
+      if (!readable.includes(ep.number)) return redirect(res, '/archiv');
+      const rendered = renderEpisode(ep, series.title, new Set(settings.graphemes));
+      return send(
+        res,
+        200,
+        V.playerPage(user, settings, {
+          title: ep.title,
+          back: '/archiv',
+          isToday: false,
+          setId: null,
+          tasks: [{ type: 'geschichte', choices: [rendered] }],
+          done: [],
+          skipStart: true,
+        }),
       );
     }
 
@@ -244,7 +364,8 @@ export function createApp(db: Db, config = loadConfig()) {
     }
 
     if (path === '/archiv') {
-      return send(res, 200, V.archivePage(user, listSets(db, child.id), url.searchParams.get('b')));
+      const known = getSettings(db, child.id).graphemes;
+      return send(res, 200, V.archivePage(user, listSets(db, child.id), url.searchParams.get('b'), shelfItems(user, child.id, known)));
     }
 
     const archiveMatch = path.match(/^\/archiv\/(\d+)$/);
@@ -254,7 +375,15 @@ export function createApp(db: Db, config = loadConfig()) {
       return send(
         res,
         200,
-        V.playerPage(user, set, [], getSettings(db, child.id), { title: 'Noch einmal lesen', back: '/archiv', isToday: false }),
+        V.playerPage(user, getSettings(db, child.id), {
+          title: 'Noch einmal lesen',
+          back: '/archiv',
+          isToday: false,
+          setId: set.id,
+          tasks: set.tasks,
+          done: [],
+          startEmoji: '📚',
+        }),
       );
     }
 
@@ -297,6 +426,10 @@ export function createApp(db: Db, config = loadConfig()) {
           setTasksPerDay(db, child.id, Number(f.get('tasks')));
           setSyllableArcs(db, child.id, f.get('arcs') === 'on');
           return redirect(res, '/admin?ok=gespeichert');
+        }
+        if (path === '/admin/vorlesen') {
+          setReadAloud(db, child.id, f.get('mode') ?? 'an', f.get('adult') === 'on');
+          return redirect(res, '/admin?ok=vorlesen');
         }
         if (path === '/admin/neu') {
           regenerateToday(db, child.id, today);

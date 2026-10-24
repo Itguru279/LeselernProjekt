@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS child_settings (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   graphemes TEXT NOT NULL DEFAULT '[]',
   tasks_per_day INTEGER NOT NULL DEFAULT 7,
-  syllable_arcs INTEGER NOT NULL DEFAULT 1
+  syllable_arcs INTEGER NOT NULL DEFAULT 1,
+  read_aloud TEXT NOT NULL DEFAULT 'an',
+  adult_tap INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS daily_sets (
@@ -72,5 +74,22 @@ export function openDb(file: string): Db {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// Spalten, die nach der ersten Version dazugekommen sind. Bestehende Daten
+// bleiben erhalten, es werden nur neue Spalten mit Standardwert angehängt.
+const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
+  { table: 'child_settings', column: 'read_aloud', definition: "TEXT NOT NULL DEFAULT 'an'" },
+  { table: 'child_settings', column: 'adult_tap', definition: 'INTEGER NOT NULL DEFAULT 1' },
+];
+
+function migrate(db: Db): void {
+  for (const c of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${c.table})`).all() as { name: string }[];
+    if (!cols.some((x) => x.name === c.column)) {
+      db.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.definition}`);
+    }
+  }
 }

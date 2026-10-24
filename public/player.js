@@ -1,10 +1,15 @@
 // Spielt die Leseaufgaben ab: eine Aufgabe pro Bildschirm, sofortiges Feedback.
+// Jeder Bildschirm kommt auf einen Stapel. "Zurück" (oben links oder die
+// Zurück-Geste des Geräts) geht genau einen Bildschirm zurück.
 import { speak, canSpeak } from './say.js';
 import { syllables } from './syllables.js';
 
 const data = JSON.parse(document.getElementById('player-data').textContent);
 const root = document.getElementById('player');
 const done = new Set(data.done);
+// Welche Aufgaben in dieser Runde dran sind (z. B. nur Übungen oder nur eine)
+const order = Array.isArray(data.only) ? data.only : data.tasks.map((_, i) => i);
+const HELP_DELAY_MS = 15000;
 
 const TITLES = {
   silben: 'Leserutsche',
@@ -13,6 +18,9 @@ const TITLES = {
   blitz: 'Blitzlesen',
   wortkette: 'Wörterkette',
   buchstabe: 'Buchstaben finden',
+  laut: 'Neuer Buchstabe',
+  anlaut: 'Womit fängt es an?',
+  satz: 'Satz lesen',
   geschichte: 'Geschichte',
 };
 
@@ -60,6 +68,7 @@ function wordEl(text, cls = '') {
   );
 }
 
+/** Knopf zum Vorlesen von Text, den das Kind NICHT selbst lesen muss. */
 function speakBtn(text, onUse, label = 'Vorlesen') {
   if (!canSpeak()) return null;
   return h(
@@ -70,7 +79,7 @@ function speakBtn(text, onUse, label = 'Vorlesen') {
       'aria-label': label,
       title: label,
       onclick: () => {
-        speak(text);
+        speak(typeof text === 'function' ? text() : text);
         onUse?.();
       },
     },
@@ -78,11 +87,26 @@ function speakBtn(text, onUse, label = 'Vorlesen') {
   );
 }
 
+/**
+ * Hilfe-Knopf für Wörter, die das Kind selbst lesen soll. Richtet sich nach
+ * der Einstellung "Vorlesen beim Antippen": sofort, erst später oder gar nicht.
+ * Gibt { el, reveal } zurück; reveal() zeigt den Knopf früher (z. B. nach einem Fehler).
+ */
+function childHelp(text, onUse, label = 'Wort anhören') {
+  const btn = data.readAloud === 'aus' ? null : speakBtn(text, onUse, label);
+  if (!btn) return { el: null, reveal() {} };
+  if (data.readAloud !== 'spaeter') return { el: btn, reveal() {} };
+  btn.classList.add('hidden');
+  const reveal = () => btn.classList.remove('hidden');
+  later(reveal, HELP_DELAY_MS);
+  return { el: btn, reveal };
+}
+
 function progressBar(index) {
   return h(
     'div',
-    { class: 'task-progress', 'aria-label': `Aufgabe ${index + 1} von ${data.tasks.length}` },
-    data.tasks.map((_, i) => h('i', { class: done.has(i) ? 'on' : i === index ? 'now' : '' })),
+    { class: 'task-progress', 'aria-label': index >= 0 ? `Aufgabe ${order.indexOf(index) + 1} von ${order.length}` : `${order.length} Aufgaben` },
+    order.map((i) => h('i', { class: done.has(i) && data.setId ? 'on' : i === index ? 'now' : '' })),
   );
 }
 
@@ -92,7 +116,59 @@ function frame(index, body) {
   root.append(progressBar(index), h('h1', { class: 'task-title' }, TITLES[task.type] ?? 'Aufgabe'), body);
 }
 
+// ---------- Bildschirme und Zurück ----------
+
+const stack = [];
+let screenId = 0;
+
+/** Zeitgeber, der verfällt, sobald ein anderer Bildschirm gezeigt wird. */
+function later(fn, ms) {
+  const mine = screenId;
+  setTimeout(() => {
+    if (mine === screenId) fn();
+  }, ms);
+}
+
+function show(render) {
+  screenId++;
+  window.speechSynthesis?.cancel();
+  document.querySelector('.celebrate')?.remove();
+  render();
+}
+
+/** Neuen Bildschirm zeigen (kommt auf den Stapel). */
+function go(render) {
+  stack.push(render);
+  if (stack.length > 1) history.pushState({ leselern: stack.length }, '');
+  show(render);
+}
+
+function leave() {
+  window.speechSynthesis?.cancel();
+  location.href = data.backUrl;
+}
+
+function back() {
+  if (stack.length <= 1) return leave();
+  history.back(); // löst popstate aus
+}
+
+window.addEventListener('popstate', () => {
+  if (stack.length <= 1) return leave();
+  stack.pop();
+  show(stack[stack.length - 1]);
+});
+
+const backBtn = document.getElementById('back-btn');
+backBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  back();
+});
+
+// ---------- Ergebnisse ----------
+
 async function saveResult(index, ok, helpCount, detail) {
+  if (!data.setId) return { sticker: null }; // nur üben, nichts speichern
   done.add(index);
   try {
     const res = await fetch('/api/result', {
@@ -115,41 +191,51 @@ function celebrate(text, next) {
     h('div', { class: 'celebrate-text' }, text),
   );
   document.body.append(overlay);
+  const mine = screenId;
   setTimeout(() => {
     overlay.remove();
-    next();
+    if (mine === screenId) next();
   }, 1100);
 }
 
+let lastSticker = null;
+const finished = new Set(); // in dieser Runde erledigt
+
 async function finishTask(index, ok, helpCount, detail) {
+  finished.add(index);
+  const mine = screenId;
   const result = await saveResult(index, ok, helpCount, detail);
   if (result.sticker) lastSticker = result.sticker;
+  if (mine !== screenId) return; // inzwischen zurückgegangen
   celebrate(PRAISE[Math.floor(Math.random() * PRAISE.length)], () => goNext(index));
 }
 
-let lastSticker = null;
+function isOpen(i) {
+  return !finished.has(i) && !(data.isToday && done.has(i));
+}
 
 function goNext(index) {
-  const next = data.tasks.findIndex((_, i) => i > index && (!data.isToday || !done.has(i)));
-  if (next >= 0) return runTask(next);
-  const firstOpen = data.isToday ? data.tasks.findIndex((_, i) => !done.has(i)) : -1;
-  if (firstOpen >= 0) return runTask(firstOpen);
-  showEnd();
+  const pos = order.indexOf(index);
+  const next = order.find((i, k) => k > pos && isOpen(i));
+  if (next !== undefined) return go(() => runTask(next));
+  const firstOpen = order.find((i) => isOpen(i));
+  if (firstOpen !== undefined && firstOpen !== index) return go(() => runTask(firstOpen));
+  go(() => showEnd());
 }
 
 // ---------- Start und Ende ----------
 
 function showStart() {
   clear();
-  const allDone = data.isToday && data.tasks.every((_, i) => done.has(i));
+  const allDone = data.isToday && order.every((i) => done.has(i));
   if (allDone) return showEnd(true);
-  const open = data.tasks.filter((_, i) => !data.isToday || !done.has(i)).length;
+  const open = order.filter((i) => isOpen(i)).length;
   root.append(
     h('div', { class: 'start center' },
-      h('div', { class: 'avatar' }, data.isToday ? '📖' : '📚'),
-      h('h1', {}, data.isToday ? 'Heute lesen' : 'Noch einmal lesen'),
+      h('div', { class: 'avatar' }, data.startEmoji),
+      h('h1', {}, data.startTitle),
       progressBar(-1),
-      h('p', { class: 'hint' }, data.isToday && done.size ? `Noch ${open} Aufgaben. Weiter geht's!` : `${open} kleine Aufgaben warten auf dich.`),
+      h('p', { class: 'hint' }, data.isToday && open < order.length ? `Noch ${open} Aufgaben. Weiter geht's!` : `${open} kleine Aufgaben warten auf dich.`),
       h('button', { class: 'btn primary huge', type: 'button', onclick: () => goNext(-1) }, "Los geht's! ▶"),
     ),
   );
@@ -157,17 +243,22 @@ function showStart() {
 
 function showEnd(already = false) {
   clear();
-  const story = data.tasks.find((t) => t.type === 'geschichte');
+  const story = order.map((i) => data.tasks[i]).find((t) => t.type === 'geschichte');
   const teaser = story?.choices?.[0]?.teaser;
+  const dayDone = data.isToday && data.tasks.every((_, i) => done.has(i));
+  const partial = order.length < data.tasks.length;
+  let headline = already ? 'Das hast du heute schon geschafft!' : 'Geschafft!';
+  if (!already && dayDone) headline = 'Alles für heute geschafft!';
   root.append(
     h('div', { class: 'end center' },
-      h('div', { class: 'trophy' }, lastSticker ?? '🏆'),
-      h('h1', {}, already ? 'Heute schon alles geschafft!' : 'Alles geschafft!'),
+      h('div', { class: 'trophy' }, lastSticker ?? (dayDone ? '🏆' : '⭐')),
+      h('h1', {}, headline),
       lastSticker ? h('p', { class: 'big-hint' }, 'Du hast einen neuen Sticker bekommen!') : null,
+      data.isToday && partial && !dayDone ? h('p', { class: 'hint' }, 'Wenn du alles von heute schaffst, bekommst du einen Sticker.') : null,
       teaser && data.isToday ? h('p', { class: 'teaser' }, '🔮 Morgen: ', teaser) : null,
       h('div', { class: 'row-center' },
-        h('a', { class: 'btn primary', href: data.backUrl }, 'Zum Menü'),
-        h('a', { class: 'btn', href: '/archiv' }, 'Noch einmal lesen'),
+        data.againUrl ? h('a', { class: 'btn primary huge', href: data.againUrl }, 'Noch eine Runde 🔁') : null,
+        h('a', { class: `btn ${data.againUrl ? '' : 'primary huge'}`, href: data.backUrl }, data.backUrl === '/menu' ? 'Zum Menü' : 'Fertig ✓'),
       ),
     ),
   );
@@ -182,6 +273,21 @@ function runTask(index) {
   runner(task, index);
 }
 
+/** Antwort-Knöpfe: richtig = weiter, falsch = wackeln und ausgrauen. */
+function answer(btn, correct, onRight, onWrong) {
+  btn.addEventListener('click', () => {
+    if (correct) {
+      btn.classList.add('right');
+      onRight();
+    } else {
+      shake(btn);
+      btn.disabled = true;
+      onWrong();
+    }
+  });
+  return btn;
+}
+
 const RUNNERS = {
   silben(task, index) {
     let help = 0;
@@ -191,6 +297,7 @@ const RUNNERS = {
     const result = h('div', { class: 'syllable-result hidden' }, wordEl(task.syllable, 'huge'));
     const more = h('div', { class: 'chips hidden' }, task.more.map((s) => h('span', { class: 'chip big' }, wordEl(s))));
     const doneBtn = h('button', { class: 'btn primary huge hidden', type: 'button', onclick: () => finishTask(index, true, help) }, 'Geschafft ✓');
+    const helper = childHelp(task.syllable.toLowerCase(), () => help++, 'Silbe anhören');
     const slideBtn = h(
       'button',
       {
@@ -198,7 +305,7 @@ const RUNNERS = {
         type: 'button',
         onclick: () => {
           track.classList.add('slid');
-          setTimeout(() => {
+          later(() => {
             result.classList.remove('hidden');
             more.classList.remove('hidden');
             doneBtn.classList.remove('hidden');
@@ -215,7 +322,7 @@ const RUNNERS = {
         track,
         slideBtn,
         result,
-        h('div', { class: 'row-center' }, speakBtn(task.syllable.toLowerCase(), () => help++, 'Silbe anhören')),
+        h('div', { class: 'row-center' }, helper.el),
         more,
         doneBtn,
       ),
@@ -225,26 +332,18 @@ const RUNNERS = {
   'wort-bild'(task, index) {
     let help = 0;
     let wrong = 0;
-    const options = task.options.map((o) => {
-      const btn = h('button', { class: 'pic-option', type: 'button' }, o.img);
-      btn.addEventListener('click', () => {
-        if (o.correct) {
-          btn.classList.add('right');
-          finishTask(index, wrong === 0, help + wrong);
-        } else {
-          wrong++;
-          shake(btn);
-          btn.disabled = true;
-        }
-      });
-      return btn;
-    });
+    const helper = childHelp(task.word, () => help++);
+    const options = task.options.map((o) =>
+      answer(h('button', { class: 'pic-option', type: 'button' }, o.img), o.correct,
+        () => finishTask(index, wrong === 0, help + wrong),
+        () => { wrong++; helper.reveal(); }),
+    );
     frame(
       index,
       h('div', { class: 'task center' },
         h('p', { class: 'hint' }, 'Lies das Wort. Tippe auf das passende Bild.'),
         h('div', { class: 'big-word' }, wordEl(task.word, 'huge')),
-        h('div', { class: 'row-center' }, speakBtn(task.word, () => help++, 'Wort anhören')),
+        h('div', { class: 'row-center' }, helper.el),
         h('div', { class: 'pic-options' }, options),
       ),
     );
@@ -252,20 +351,11 @@ const RUNNERS = {
 
   'bild-wort'(task, index) {
     let wrong = 0;
-    const options = task.options.map((o) => {
-      const btn = h('button', { class: 'word-option', type: 'button' }, wordEl(o.word));
-      btn.addEventListener('click', () => {
-        if (o.correct) {
-          btn.classList.add('right');
-          finishTask(index, wrong === 0, wrong);
-        } else {
-          wrong++;
-          shake(btn);
-          btn.disabled = true;
-        }
-      });
-      return btn;
-    });
+    const options = task.options.map((o) =>
+      answer(h('button', { class: 'word-option', type: 'button' }, wordEl(o.word)), o.correct,
+        () => finishTask(index, wrong === 0, wrong),
+        () => wrong++),
+    );
     frame(
       index,
       h('div', { class: 'task center' },
@@ -282,32 +372,27 @@ const RUNNERS = {
     const flash = h('div', { class: 'flash-word hidden' }, wordEl(task.word, 'huge'));
     const optionsBox = h('div', { class: 'word-options hidden' });
     const showBtn = h('button', { class: 'btn primary huge', type: 'button' }, 'Zeig mir das Wort! ⚡');
-    const show = () => {
+    const againBtn = h('button', { class: 'btn hidden', type: 'button' }, 'Nochmal zeigen 👀');
+    const flashIt = () => {
       showBtn.classList.add('hidden');
+      againBtn.classList.add('hidden');
       optionsBox.classList.add('hidden');
       flash.classList.remove('hidden');
-      setTimeout(() => {
+      later(() => {
         flash.classList.add('hidden');
         optionsBox.classList.remove('hidden');
         againBtn.classList.remove('hidden');
       }, 2500);
     };
-    showBtn.addEventListener('click', show);
-    const againBtn = h('button', { class: 'btn hidden', type: 'button', onclick: () => { help++; againBtn.classList.add('hidden'); show(); } }, 'Nochmal zeigen 👀');
-    task.options.forEach((w) => {
-      const btn = h('button', { class: 'word-option', type: 'button' }, wordEl(w));
-      btn.addEventListener('click', () => {
-        if (w === task.word) {
-          btn.classList.add('right');
-          finishTask(index, wrong === 0, help + wrong);
-        } else {
-          wrong++;
-          shake(btn);
-          btn.disabled = true;
-        }
-      });
-      optionsBox.append(btn);
-    });
+    showBtn.addEventListener('click', flashIt);
+    againBtn.addEventListener('click', () => { help++; flashIt(); });
+    task.options.forEach((w) =>
+      optionsBox.append(
+        answer(h('button', { class: 'word-option', type: 'button' }, wordEl(w)), w === task.word,
+          () => finishTask(index, wrong === 0, help + wrong),
+          () => wrong++),
+      ),
+    );
     frame(
       index,
       h('div', { class: 'task center' },
@@ -327,15 +412,7 @@ const RUNNERS = {
       h('button', { class: `chain-word ${i === 0 ? 'next' : ''}`, type: 'button' }, wordEl(w)),
     );
     const doneBtn = h('button', { class: 'btn primary huge hidden', type: 'button', onclick: () => finishTask(index, true, help) }, 'Geschafft ✓');
-    const helpBtn = speakBtn('', null, 'Wort anhören');
-    if (helpBtn) {
-      helpBtn.onclick = () => {
-        if (pos < task.words.length) {
-          speak(task.words[pos]);
-          help++;
-        }
-      };
-    }
+    const helper = childHelp(() => task.words[Math.min(pos, task.words.length - 1)], () => help++);
     btns.forEach((btn, i) =>
       btn.addEventListener('click', () => {
         if (i !== pos) return;
@@ -345,7 +422,7 @@ const RUNNERS = {
         if (pos < btns.length) btns[pos].classList.add('next');
         else {
           doneBtn.classList.remove('hidden');
-          helpBtn?.classList.add('hidden');
+          helper.el?.remove();
         }
       }),
     );
@@ -354,7 +431,7 @@ const RUNNERS = {
       h('div', { class: 'task center' },
         h('p', { class: 'hint' }, 'Lies ein Wort nach dem anderen laut. Tippe es an, wenn du es gelesen hast.'),
         h('div', { class: 'chain' }, btns),
-        h('div', { class: 'row-center' }, helpBtn),
+        h('div', { class: 'row-center' }, helper.el),
         doneBtn,
       ),
     );
@@ -364,6 +441,7 @@ const RUNNERS = {
     let wrong = 0;
     const total = task.grid.filter((c) => c.toLowerCase() === task.target).length;
     let found = 0;
+    const counter = h('p', { class: 'hint' }, `0 von ${total}`);
     const cells = task.grid.map((c) => {
       const btn = h('button', { class: 'letter-cell', type: 'button' }, c);
       btn.addEventListener('click', () => {
@@ -380,28 +458,97 @@ const RUNNERS = {
       });
       return btn;
     });
-    const counter = h('p', { class: 'hint' }, `0 von ${total}`);
-    const upper = task.target.toUpperCase();
     frame(
       index,
       h('div', { class: 'task center' },
         h('p', { class: 'hint' }, 'Finde alle:'),
-        h('div', { class: 'target-letter' }, `${upper} ${task.target}`),
+        h('div', { class: 'target-letter' }, `${task.target.toUpperCase()} ${task.target}`),
         h('div', { class: 'letter-grid' }, cells),
         counter,
       ),
     );
   },
 
+  // Neuer Buchstabe: anschauen, Laut hören, nachsprechen.
+  laut(task, index) {
+    const big = task.target.replace('-', '');
+    const upper = big.charAt(0).toUpperCase() + big.slice(1);
+    const hero = h('button', { class: 'letter-hero', type: 'button', onclick: () => speak(task.say) }, `${upper} ${big}`);
+    frame(
+      index,
+      h('div', { class: 'task center' },
+        h('p', { class: 'hint' }, 'Schau dir den Buchstaben an. Tippe drauf und sprich nach.'),
+        hero,
+        h('p', { class: 'example' }, h('span', { class: 'example-img' }, task.img), ' ', h('span', { class: 'adult-text' }, task.word)),
+        h('p', { class: 'hint adult-tip' }, '👩 Für Erwachsene: ', task.tip),
+        h('button', { class: 'btn primary huge', type: 'button', onclick: () => finishTask(index, true, 0) }, 'Ich kenne ihn ✓'),
+      ),
+    );
+    later(() => speak(task.say), 400);
+  },
+
+  // Welches Bild fängt mit dem Laut an? Das Kind hört die Wörter und liest nur den Buchstaben.
+  anlaut(task, index) {
+    let wrong = 0;
+    const big = task.target.replace('-', '');
+    const upper = big.charAt(0).toUpperCase() + big.slice(1);
+    const options = task.options.map((o) => {
+      const btn = h('button', { class: 'pic-option', type: 'button', 'aria-label': o.word }, o.img);
+      btn.addEventListener('click', () => {
+        speak(o.word);
+        if (o.correct) {
+          btn.classList.add('right');
+          finishTask(index, wrong === 0, wrong);
+        } else {
+          wrong++;
+          shake(btn);
+          btn.disabled = true;
+        }
+      });
+      return btn;
+    });
+    const sayAll = () => speak(task.options.map((o) => o.word).join(', '));
+    frame(
+      index,
+      h('div', { class: 'task center' },
+        h('p', { class: 'hint' }, 'Welches Bild fängt so an?'),
+        h('div', { class: 'target-letter' }, `${upper} ${big}`),
+        h('div', { class: 'pic-options' }, options),
+        h('div', { class: 'row-center' }, speakBtn(sayAll, null, 'Alle Bilder anhören')),
+      ),
+    );
+  },
+
+  // Einen kleinen Satz lesen und das passende Bild antippen.
+  satz(task, index) {
+    let help = 0;
+    let wrong = 0;
+    const helper = childHelp(task.text, () => help++, 'Satz anhören');
+    const options = task.options.map((o) =>
+      answer(h('button', { class: 'pic-option', type: 'button' }, o.img), o.correct,
+        () => finishTask(index, wrong === 0, help + wrong),
+        () => { wrong++; helper.reveal(); }),
+    );
+    frame(
+      index,
+      h('div', { class: 'task center' },
+        h('p', { class: 'hint' }, 'Lies den Satz. Welches Bild passt?'),
+        h('div', { class: 'big-sentence' }, task.text.split(' ').map((w) => [wordEl(w), ' '])),
+        h('div', { class: 'row-center' }, helper.el),
+        h('div', { class: 'pic-options' }, options),
+      ),
+    );
+  },
+
   geschichte(task, index) {
-    if (task.choices.length === 1) return readStory(task.choices[0], index);
+    if (task.choices.length === 1) return readStory(task.choices[0], index, 0);
     frame(
       index,
       h('div', { class: 'task center' },
         h('p', { class: 'hint' }, 'Welche Geschichte möchtest du heute lesen?'),
         h('div', { class: 'story-choices' },
           task.choices.map((c) =>
-            h('button', { class: 'story-card', type: 'button', onclick: () => readStory(c, index) },
+            h('button', { class: 'story-card', type: 'button', onclick: () => go(() => readStory(c, index, 0)) },
               h('span', { class: 'story-cover' }, c.cover),
               h('span', { class: 'story-series' }, c.seriesTitle),
               h('span', { class: 'story-title' }, `Folge ${c.number}: ${c.title}`),
@@ -413,71 +560,78 @@ const RUNNERS = {
   },
 };
 
-function readStory(ep, index) {
-  let help = 0;
-  let line = 0;
+let storyHelp = 0;
 
-  const render = () => {
-    clear();
-    const lines = ep.lines.slice(0, line + 1).map((segments, i) =>
-      h('p', { class: `story-line ${i === line ? 'current' : 'past'}` },
-        segments.flatMap((s) => {
-          // Leerzeichen außerhalb der Knöpfe, sonst verschwinden sie
-          const lead = s.text.match(/^\s*/)[0];
-          const trail = s.text.match(/\s*$/)[0];
-          const text = s.text.trim();
-          if (!text) return [s.text];
-          const btn = s.child
-            ? h('button', { class: 'seg child', type: 'button', title: 'Antippen zum Anhören', onclick: () => { speak(text.replace(/[^A-Za-zÄÖÜäöüß ]/g, '')); help++; } }, wordEl(text))
-            : h('button', { class: 'seg adult', type: 'button', title: 'Antippen zum Vorlesen', onclick: () => speak(text) }, text);
-          return [lead, btn, trail];
-        }),
-      ),
-    );
-    const last = line >= ep.lines.length - 1;
-    root.append(
-      progressBar(index),
-      h('h1', { class: 'task-title' }, `${ep.cover} ${ep.title}`),
-      h('p', { class: 'hint' }, 'Die großen Wörter liest du. Den grauen Text liest jemand vor (oder antippen).'),
-      h('div', { class: 'story' }, lines),
-      h('div', { class: 'row-center' },
-        h('button', {
-          class: 'btn primary huge',
-          type: 'button',
-          onclick: () => {
-            if (last) askQuestion(ep, index, help);
-            else {
-              line++;
-              render();
-            }
-          },
-        }, last ? 'Fertig gelesen ✓' : 'Weiter ▶'),
-      ),
-    );
-    const current = root.querySelector('.story-line.current');
-    current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  };
-  render();
+function readStory(ep, index, line) {
+  if (line === 0) storyHelp = 0;
+  clear();
+  const childMode = data.readAloud; // an | spaeter | aus
+  const childSegs = [];
+  const lines = ep.lines.slice(0, line + 1).map((segments, i) =>
+    h('p', { class: `story-line ${i === line ? 'current' : 'past'}` },
+      segments.flatMap((s) => {
+        // Leerzeichen außerhalb der Knöpfe, sonst verschwinden sie
+        const lead = s.text.match(/^\s*/)[0];
+        const trail = s.text.match(/\s*$/)[0];
+        const text = s.text.trim();
+        if (!text) return [s.text];
+        let el;
+        if (s.child) {
+          if (childMode === 'aus') {
+            el = h('span', { class: 'seg child' }, wordEl(text));
+          } else {
+            const locked = childMode === 'spaeter' && i === line;
+            el = h('button', {
+              class: `seg child ${locked ? 'locked' : ''}`,
+              type: 'button',
+              title: 'Antippen zum Anhören',
+              onclick: () => {
+                if (el.classList.contains('locked')) return shake(el);
+                speak(text.replace(/[^A-Za-zÄÖÜäöüß ]/g, ''));
+                storyHelp++;
+              },
+            }, wordEl(text));
+            if (locked) childSegs.push(el);
+          }
+        } else if (data.adultTap) {
+          el = h('button', { class: 'seg adult', type: 'button', title: 'Antippen zum Vorlesen', onclick: () => speak(text) }, text);
+        } else {
+          el = h('span', { class: 'seg adult' }, text);
+        }
+        return [lead, el, trail];
+      }),
+    ),
+  );
+  if (childSegs.length) later(() => childSegs.forEach((el) => el.classList.remove('locked')), HELP_DELAY_MS);
+  const last = line >= ep.lines.length - 1;
+  root.append(
+    progressBar(index),
+    h('h1', { class: 'task-title' }, `${ep.cover} ${ep.title}`),
+    h('p', { class: 'hint' }, data.adultTap
+      ? 'Die großen Wörter liest du. Den grauen Text liest jemand vor (oder antippen).'
+      : 'Die großen Wörter liest du. Den grauen Text liest jemand vor.'),
+    h('div', { class: 'story' }, lines),
+    h('div', { class: 'row-center' },
+      h('button', {
+        class: 'btn primary huge',
+        type: 'button',
+        onclick: () => (last ? go(() => askQuestion(ep, index)) : go(() => readStory(ep, index, line + 1))),
+      }, last ? 'Fertig gelesen ✓' : 'Weiter ▶'),
+    ),
+  );
+  const current = root.querySelector('.story-line.current');
+  current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
-function askQuestion(ep, index, help) {
+function askQuestion(ep, index) {
   let wrong = 0;
   const q = ep.question;
   clear();
-  const options = q.options.map((o) => {
-    const btn = h('button', { class: 'pic-option', type: 'button', 'aria-label': o.label }, o.img);
-    btn.addEventListener('click', () => {
-      if (o.correct) {
-        btn.classList.add('right');
-        finishTask(index, wrong === 0, help + wrong, { series: ep.series, number: ep.number });
-      } else {
-        wrong++;
-        shake(btn);
-        btn.disabled = true;
-      }
-    });
-    return btn;
-  });
+  const options = q.options.map((o) =>
+    answer(h('button', { class: 'pic-option', type: 'button', 'aria-label': o.label }, o.img), o.correct,
+      () => finishTask(index, wrong === 0, storyHelp + wrong, { series: ep.series, number: ep.number }),
+      () => wrong++),
+  );
   root.append(
     progressBar(index),
     h('h1', { class: 'task-title' }, 'Hast du gut aufgepasst?'),
@@ -486,7 +640,14 @@ function askQuestion(ep, index, help) {
       h('div', { class: 'pic-options' }, options),
     ),
   );
-  speak(q.text);
+  later(() => speak(q.text), 300);
 }
 
-showStart();
+// ---------- Start ----------
+
+if (data.skipStart && order.length) {
+  const first = order.find((i) => isOpen(i)) ?? order[0];
+  go(() => runTask(first));
+} else {
+  go(showStart);
+}

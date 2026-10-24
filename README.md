@@ -9,10 +9,15 @@ Die App läuft komplett auf dem eigenen Server (zum Beispiel Unraid), ohne Cloud
 | Bereich | Inhalt |
 | --- | --- |
 | **Anmelden** | Ben tippt drei Tiere in der richtigen Reihenfolge (kein Lesen nötig). Erwachsene melden sich mit Passwort an. |
-| **Heute lesen** | 5–10 Aufgaben pro Tag: Leserutsche (Silben), Wort zu Bild, Bild zu Wort, Blitzlesen, Wörterkette, Buchstaben finden und zum Schluss eine Geschichte mit Verständnisfrage. Am Ende gibt es einen Sticker. |
+| **Heute lesen** | 5–10 Aufgaben pro Tag nacheinander: Leserutsche (Silben), Wort zu Bild, Bild zu Wort, Blitzlesen, Wörterkette, Buchstaben finden, „Womit fängt es an?“, Satz lesen und zum Schluss eine Geschichte mit Verständnisfrage. Am Ende gibt es einen Sticker. |
+| **Lernen** | Lernrunde zu einem einzelnen freigeschalteten Buchstaben: Laut hören, Anlaut finden, Buchstaben finden, Silben, Wörter und Sätze mit genau diesem Buchstaben. Noch nicht freigeschaltete Buchstaben sind verschlossen. |
+| **Üben** | Die heutigen Übungen einzeln oder alle nacheinander (ohne Geschichte). Zählt für den Sticker mit. |
+| **Geschichte** | Nur die heutige Geschichte (Wahl zwischen zwei Folgen). |
 | **Buchstaben** | Ben sieht seine Buchstaben und kann Silben und Wörter dazu anhören. Der Admin wählt hier aus, welche Buchstaben bekannt sind (Start: A M L O I E). |
-| **Alle Geschichten** | Archiv aller bisher erzeugten Aufgaben, mit den enthaltenen Buchstaben und einem Filter. Alles lässt sich noch einmal lesen. |
-| **Einstellungen** (nur Admin) | Aufgaben pro Tag, Silbenbögen an/aus, heutige Aufgaben neu erzeugen, Bilder-Code von Ben, Admin-Passwort. |
+| **Alle Geschichten** | Bücherregal (gelesene Folgen noch einmal lesen; der Admin sieht alle) und Archiv aller bisher erzeugten Tage mit Buchstaben-Filter. |
+| **Einstellungen** (nur Admin) | Aufgaben pro Tag, Silbenbögen an/aus, Vorlesen beim Antippen (sofort / erst nach 15 Sekunden / aus), heutige Aufgaben neu erzeugen, Bilder-Code von Ben, Admin-Passwort. |
+
+Jede Seite hat oben links einen großen **Zurück**-Knopf. In den Aufgaben geht er genau einen Bildschirm zurück (z. B. von der Geschichte zurück zur Auswahl); die Zurück-Geste des Tablets genauso.
 
 Vorlesen und Hilfe nutzen die Sprachausgabe des Tablets oder Handys (Web Speech API), es wird nichts ins Internet geschickt.
 
@@ -51,6 +56,8 @@ Die Schritt-für-Schritt-Anleitung steht in **[docs/UNRAID.md](docs/UNRAID.md)**
 - **Grapheme statt Buchstaben:** Die App kennt Laute wie `sch`, `ei`, `ie`, `ck` oder `st`/`sp` am Wortanfang als eigene Einheiten. „Stern“ ist erst lesbar, wenn `St` freigeschaltet ist.
 - **Wortschatz** in [`src/content/words.ts`](src/content/words.ts): Wörter mit Bild (Emoji), Namen und kleine Wörter.
 - **Geschichten** in [`src/content/stories.ts`](src/content/stories.ts): Fortsetzungsserien. Wörter in `[eckigen Klammern]` liest das Kind selbst, aber nur, wenn alle Laute bekannt sind. Sonst werden sie automatisch zum Vorlesetext. So passt jede Folge zu jedem Lernstand.
+- **Lerninhalte je Buchstabe** in [`src/content/letters.ts`](src/content/letters.ts): Fibel-Reihenfolge A M L O I E U S F N W R T P, Laut-Hinweise und kurze Sätze.
+- **Geschichten je Buchstabenstufe** in [`src/content/stories-stufen.ts`](src/content/stories-stufen.ts): je Stufe eine Serie mit 5 Folgen (Mimi, Lulu, Sisi, Fio, Finn, Wolfi, Rufus, Toni, Opa Pit). Jedes Klammer-Wort ist auf der eigenen Stufe lesbar, das prüfen die Tests. Angeboten wird bevorzugt die Serie des zuletzt freigeschalteten Buchstabens.
 - **Generator** in [`src/generator/daily.ts`](src/generator/daily.ts): Baut die Tagesaufgaben mit festem Zufall (gleicher Tag = gleiche Aufgaben). Der zuletzt gelernte Buchstabe kommt häufiger vor, Wörter der letzten Tage seltener.
 - **Prüfer:** Vor dem Speichern prüft `validateSet()` jedes Wort noch einmal. Die Tests erzeugen Aufgaben für 28 Lernstufen, 12 Tage und 3 Aufgabenmengen und prüfen, dass kein unlesbares Wort durchrutscht.
 
