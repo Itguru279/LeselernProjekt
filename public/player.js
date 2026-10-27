@@ -3,6 +3,7 @@
 // Zurück-Geste des Geräts) geht genau einen Bildschirm zurück.
 import { speak, canSpeak } from './say.js';
 import { syllables } from './syllables.js';
+import { h } from './dom.js';
 
 const data = JSON.parse(document.getElementById('player-data').textContent);
 const root = document.getElementById('player');
@@ -27,21 +28,6 @@ const TITLES = {
 const PRAISE = ['Super!', 'Toll gemacht!', 'Klasse!', 'Prima!', 'Spitze!', 'Juhu!', 'Stark!'];
 
 // ---------- kleine Helfer ----------
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === false || v == null) continue;
-    if (k === 'class') el.className = v;
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else el.setAttribute(k, v === true ? '' : v);
-  }
-  for (const c of children.flat()) {
-    if (c == null || c === false) continue;
-    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  }
-  return el;
-}
 
 function clear() {
   root.replaceChildren();
